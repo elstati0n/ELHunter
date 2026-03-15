@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "ElHunter",
+  "version": "1.0.0",
+  "description": "Real-time domain & IP threat analysis via VirusTotal and AbuseIPDB",
+  "permissions": [
+    "storage",
+    "tabs",
+    "webNavigation",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://www.virustotal.com/*",
+    "https://api.abuseipdb.com/*",
+    "https://dns.google/*",
+    "https://cloudflare-dns.com/*",
+    "https://networkcalc.com/*",
+    "https://ipinfo.io/*",
+    "https://api.telegram.org/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.mistral.ai/*",
+    "https://api.groq.com/*",
+    "https://openrouter.ai/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "blocked.html",
+        "blocked.js",
+        "phishing-content.js",
+        "icons/icon16.png",
+        "icons/icon48.png",
+        "icons/icon128.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

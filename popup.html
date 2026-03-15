@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>ElHunter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg0:#000000;--bg1:#000000;--bg2:#000000;
+  --line:rgba(255,255,255,.07);--line2:rgba(59,158,255,.22);
+  --txt:#d8e8f8;--dim:#b8cce0;--dim2:#7a94b0;
+  --blue:#3b9eff;--blue-g:rgba(59,158,255,.1);
+  --green:#0dcc88;--green-g:rgba(13,204,136,.1);
+  --amber:#f5a623;--amber-g:rgba(245,166,35,.1);
+  --red:#ff4466;--red-g:rgba(255,68,102,.1);
+  --tg:#29b6f6;--tg-g:rgba(41,182,246,.1);
+  --mono:"JetBrains Mono",monospace;--sans:"Space Grotesk",sans-serif;
+}
+html{width:440px}
+body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13px;overflow-x:hidden}
+
+/* HEADER */
+.hdr{background:var(--bg1);border-bottom:1px solid var(--line);padding:11px 16px;display:flex;align-items:center;gap:10px;position:relative}
+.hdr::after{content:"";position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(59,158,255,.5),transparent)}
+.logo{width:34px;height:34px;min-width:34px;border-radius:50%;overflow:hidden;flex-shrink:0}
+.logo img{width:34px;height:34px;display:block}
+.hdr-text{flex:1}
+.hdr-name{font-size:14px;font-weight:700;color:#fff}
+.hdr-sub{font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:.14em;text-transform:uppercase;margin-top:1px}
+.sdot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex-shrink:0;position:relative}
+.sdot::before{content:"";position:absolute;inset:-5px;border-radius:50%;background:var(--green);opacity:.15;animation:pulse 2.2s ease-out infinite}
+.sdot.dead{background:var(--dim);box-shadow:none}.sdot.dead::before{display:none}
+@keyframes pulse{0%{transform:scale(1);opacity:.25}100%{transform:scale(2.5);opacity:0}}
+
+/* TABS */
+.tabs{display:flex;background:var(--bg1);border-bottom:1px solid var(--line);padding:0 6px;gap:2px;position:sticky;top:0;z-index:10}
+.tab{flex:1;background:none;border:none;cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:600;color:var(--dim);padding:10px 2px 9px;display:flex;align-items:center;justify-content:center;gap:4px;border-bottom:2px solid transparent;transition:color .15s,border-color .15s;white-space:nowrap;position:relative;top:1px}
+.tab:hover{color:var(--txt)}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tab-ico{font-size:12px}
+
+/* PANELS */
+.panel{display:none;padding:12px 13px 16px;flex-direction:column;gap:10px}
+.panel.active{display:flex}
+
+/* SITE */
+.site-empty{font-size:11px;color:var(--dim);text-align:center;padding:10px 0}
+.site-host-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.14);border-radius:8px}
+.shb-name{font-family:var(--mono);font-size:10.5px;color:var(--blue);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spin-row{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:11px;padding:4px 0}
+.spin{width:11px;height:11px;border-radius:50%;border:2px solid rgba(59,158,255,.18);border-top-color:var(--blue);animation:rot .7s linear infinite;flex-shrink:0;display:inline-block}
+@keyframes rot{to{transform:rotate(360deg)}}
+.srow{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.srow:last-child{border-bottom:none}
+.srow-lbl{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:5px;flex-shrink:0}
+.srow-val{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--txt);text-align:right;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.v-bad{color:var(--red)}.v-ok{color:var(--green)}.v-warn{color:var(--amber)}.v-dim{color:var(--dim)}
+.bdg{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:10px;font-family:var(--mono);font-size:9.5px;font-weight:700}
+.bdg-clean{background:var(--green-g);color:var(--green);border:1px solid rgba(13,204,136,.25)}
+.bdg-warn{background:var(--amber-g);color:var(--amber);border:1px solid rgba(245,166,35,.25)}
+.bdg-bad{background:var(--red-g);color:var(--red);border:1px solid rgba(255,68,102,.25)}
+.bdg-dim{background:rgba(77,98,133,.1);color:var(--dim);border:1px solid rgba(77,98,133,.2)}
+.bdg-cf{background:rgba(246,130,31,.1);color:#f6821f;border:1px solid rgba(246,130,31,.3)}
+.bdg-ip{background:var(--blue-g);color:var(--blue);border:1px solid rgba(59,158,255,.2)}
+
+/* CARDS */
+.card{background:var(--bg1);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.card-hd{padding:9px 14px;background:linear-gradient(90deg,var(--bg2),var(--bg1));border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.card-ico{font-size:13px}
+.card-lbl{flex:1;font-size:11px;font-weight:600;color:var(--txt)}
+.ctag{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:20px}
+.ct-on{background:var(--green-g);color:var(--green);border:1px solid rgba(13,204,136,.25)}
+.ct-off{background:rgba(77,98,133,.1);color:var(--dim);border:1px solid rgba(77,98,133,.2)}
+.ct-blue{background:var(--blue-g);color:var(--blue);border:1px solid rgba(59,158,255,.2)}
+.card-body{padding:12px 14px;display:flex;flex-direction:column;gap:9px}
+
+/* OSINT BOX */
+.osint-box{background:rgba(59,158,255,.06);border:1px solid rgba(59,158,255,.13);border-radius:8px;padding:9px 12px;font-size:10.5px;color:var(--dim);line-height:1.6}
+.osint-box strong{color:rgba(59,158,255,.9)}
+
+/* KEY BLOCKS */
+.key-block{display:flex;flex-direction:column;gap:8px;padding-top:10px;border-top:1px solid var(--line)}
+.key-block:first-child{border-top:none;padding-top:0}
+.key-lbl{font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);display:flex;align-items:center;gap:7px}
+.key-status{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 6px;border-radius:10px}
+.ks-on{background:var(--green-g);color:var(--green);border:1px solid rgba(13,204,136,.22)}
+.ks-off{background:rgba(77,98,133,.08);color:var(--dim);border:1px solid rgba(77,98,133,.18)}
+.key-hint{font-size:10.5px;color:var(--dim);line-height:1.55}
+.key-hint strong{color:var(--tg)}
+.inp-row{display:flex;gap:6px;align-items:center}
+.inp{flex:1;min-width:0;background:var(--bg0);border:1px solid var(--line);border-radius:7px;color:var(--txt);font-family:var(--mono);font-size:11px;letter-spacing:.04em;padding:8px 11px;outline:none;transition:border-color .18s}
+.inp::placeholder{color:var(--dim2);font-family:var(--sans);font-size:11px;letter-spacing:0}
+.inp:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(59,158,255,.1)}
+.btn{cursor:pointer;border:none;border-radius:7px;font-family:var(--sans);font-size:11px;font-weight:600;height:32px;padding:0 13px;display:inline-flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap;flex-shrink:0}
+.btn-p{background:linear-gradient(135deg,#1155cc,#1a88cc);color:#fff;box-shadow:0 2px 8px rgba(26,136,204,.25)}
+.btn-p:hover{filter:brightness(1.15)}
+.btn-g{background:transparent;color:var(--blue);border:1px solid var(--line2)}
+.btn-g:hover{background:var(--blue-g)}
+.btn-d{background:var(--red-g);color:var(--red);border:1px solid rgba(255,68,102,.2)}
+.btn-d:hover{background:rgba(255,68,102,.18)}
+.btns-row{display:flex;gap:6px}
+.key-saved{display:flex;align-items:center;gap:8px;padding:8px 11px;background:var(--bg0);border:1px solid var(--line);border-radius:7px}
+.key-dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 5px var(--green);flex-shrink:0}
+.key-mask{flex:1;font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.05em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* RULES */
+.f-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.f-lbl{font-size:11px;color:var(--dim)}
+.sel{background:var(--bg0);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:6px 9px;font-size:11px;cursor:pointer;outline:none;font-family:var(--sans)}
+.sel:focus{border-color:var(--blue)}
+.cr-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.cr-hd-lbl{font-size:11px;color:var(--dim);font-weight:600}
+.add-row{display:none;gap:6px;align-items:center;margin-bottom:8px}
+.add-row.open{display:flex}
+.ctry-inp{flex:1;background:var(--bg0);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px 10px;font-size:11px;outline:none;font-family:var(--sans)}
+.ctry-inp:focus{border-color:var(--blue)}
+.no-rules{font-size:11px;color:var(--dim2);text-align:center;padding:12px 0}
+/* country rule item */
+.cr-item{background:var(--bg0);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:6px}
+.cr-item:last-child{margin-bottom:0}
+.cr-row1{display:flex;align-items:center;gap:8px}
+.cr-flag{font-size:17px;line-height:1;flex-shrink:0}
+.cr-name{flex:1;font-size:11.5px;font-weight:600;color:var(--txt)}
+.cr-rm{background:none;border:none;color:var(--dim2);cursor:pointer;font-size:15px;line-height:1;padding:0 3px;transition:color .15s}
+.cr-rm:hover{color:var(--red)}
+.cr-row2{display:flex;align-items:center;gap:5px;margin-top:8px;flex-wrap:wrap}
+.tog{display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-size:9.5px;font-weight:600;padding:3px 8px;border-radius:20px;border:1px solid transparent;transition:all .15s;user-select:none;font-family:var(--sans)}
+.t-notif-on{background:rgba(245,166,35,.1);color:var(--amber);border-color:rgba(245,166,35,.2)}
+.t-notif-off{background:rgba(77,98,133,.07);color:var(--dim2);border-color:rgba(77,98,133,.12)}
+.t-block-on{background:rgba(255,68,102,.1);color:var(--red);border-color:rgba(255,68,102,.2)}
+.t-block-off{background:rgba(77,98,133,.07);color:var(--dim2);border-color:rgba(77,98,133,.12)}
+.t-tg-on{background:rgba(41,182,246,.1);color:var(--tg);border-color:rgba(41,182,246,.2)}
+.t-tg-off{background:rgba(77,98,133,.07);color:var(--dim2);border-color:rgba(77,98,133,.12)}
+.cr-mode-sel{background:rgba(245,166,35,.07);border:1px solid rgba(245,166,35,.2);color:var(--amber);border-radius:20px;padding:3px 8px;font-size:9.5px;font-weight:600;cursor:pointer;outline:none;font-family:var(--sans);display:none}
+.cr-mode-sel.show{display:inline-block}
+.bdg-blocked{background:rgba(255,140,0,.12);color:#ff8c00;border:1px solid rgba(255,140,0,.3)}
+.t-domain-on{background:rgba(138,91,246,.12);color:#a87fff;border-color:rgba(138,91,246,.25)}
+.t-domain-off{background:rgba(77,98,133,.07);color:var(--dim2);border-color:rgba(77,98,133,.12)}
+.t-ip-on{background:rgba(59,158,255,.12);color:var(--blue);border-color:rgba(59,158,255,.25)}
+.t-ip-off{background:rgba(77,98,133,.07);color:var(--dim2);border-color:rgba(77,98,133,.12)}
+.ch4{background:rgba(255,140,0,.1);color:#ff8c00;border:1px solid rgba(255,140,0,.18)}
+
+/* CACHE */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:3px;padding:5px 11px;border-radius:20px;font-family:var(--mono);font-size:10px;font-weight:500;cursor:pointer;transition:filter .15s}
+.chip:hover{filter:brightness(1.2)}
+.ch0{background:rgba(59,158,255,.1);color:var(--blue);border:1px solid rgba(59,158,255,.18)}
+.ch1{background:var(--green-g);color:var(--green);border:1px solid rgba(13,204,136,.18)}
+.ch2{background:var(--amber-g);color:var(--amber);border:1px solid rgba(245,166,35,.18)}
+.ch3{background:var(--red-g);color:var(--red);border:1px solid rgba(255,68,102,.18)}
+.cache-foot{display:flex;justify-content:flex-end}
+
+/* TOOLTIP */
+.tog{position:relative}
+.tog::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);background:#0a0f1a;color:#d8e8f8;border:1px solid rgba(59,158,255,.2);border-radius:7px;padding:5px 10px;font-size:10px;font-family:var(--sans);font-weight:500;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.6);line-height:1.4;text-align:center;max-width:180px;white-space:normal}
+.tog:hover::after{opacity:1}
+.tog::before{content:'';position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:rgba(59,158,255,.2);pointer-events:none;opacity:0;transition:opacity .15s;z-index:999}
+.tog:hover::before{opacity:1}
+
+.toast{position:fixed;bottom:10px;left:50%;transform:translateX(-50%) translateY(44px);background:var(--bg2);border:1px solid var(--line2);color:var(--txt);font-size:11.5px;font-weight:500;padding:7px 16px;border-radius:30px;opacity:0;transition:all .28s cubic-bezier(.34,1.56,.64,1);z-index:9999;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.5);white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.ftr{background:var(--bg1);border-top:1px solid var(--line);padding:7px 16px;display:flex;justify-content:space-between;align-items:center}
+.ftr span{font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:.07em}
+.ftr .v{color:var(--blue)}
+
+/* OVERLAY */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:100;overflow-y:auto;display:none}
+.ov.show{display:block}
+.ov-panel{background:#0f1520;border-radius:12px;margin:12px;border:1px solid rgba(255,255,255,.08);overflow:hidden}
+.ov-hd{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.06)}
+.ov-title{font-size:12px;font-weight:700}
+.ov-close{background:none;border:none;color:var(--dim);font-size:17px;cursor:pointer;padding:2px 6px}
+.ov-cols{display:grid;grid-template-columns:1fr 80px 60px 50px;padding:6px 16px;border-bottom:1px solid rgba(255,255,255,.04)}
+.ov-cols span{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em}
+.ov-cols span:not(:first-child){text-align:center}
+.ov-rows{max-height:320px;overflow-y:auto}
+.ov-row{display:grid;grid-template-columns:1fr 80px 60px 50px;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center}
+.ov-row:last-child{border-bottom:none}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="logo"><img src="icons/icon128.png" width="34" height="34" alt=""/></div>
+  <div class="hdr-text">
+    <div class="hdr-name">ElHunter</div>
+    <div class="hdr-sub">Threat Intelligence Layer</div>
+  </div>
+  <div class="sdot dead" id="gDot"></div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="main"><span class="tab-ico">&#128269;</span>Main</button>
+  <button class="tab" data-tab="keys"><span class="tab-ico">&#128273;</span>API Keys</button>
+  <button class="tab" data-tab="rules"><span class="tab-ico">&#9881;</span>Rules</button>
+  <button class="tab" data-tab="cache"><span class="tab-ico">&#128190;</span>Cache</button>
+</nav>
+
+<!-- MAIN -->
+<div class="panel active" id="tab-main">
+  <div id="siteEmpty" class="site-empty">No active HTTP tab detected</div>
+  <div id="siteWrap" style="display:none">
+    <div class="site-host-bar">
+      <span style="font-size:13px">&#127760;</span>
+      <span class="shb-name" id="siteHostLabel">-</span>
+    </div>
+    <div class="spin-row" id="siteLoading"><div class="spin"></div><span>Analyzing...</span></div>
+    <div id="siteRows" style="display:none">
+      <div class="srow"><span class="srow-lbl">&#128737; Threat Level</span><span id="siteLevelBadge"></span></div>
+      <div class="srow"><span class="srow-lbl">&#128270; VirusTotal</span><span class="srow-val" id="siteVT">-</span></div>
+      <div class="srow"><span class="srow-lbl">&#128680; AbuseIPDB</span><span class="srow-val v-dim" id="siteAbuse">-</span></div>
+      <div class="srow"><span class="srow-lbl">&#127758; Country</span><span class="srow-val" id="siteCountry">-</span></div>
+      <div class="srow"><span class="srow-lbl">&#9729; Cloudflare</span><span id="siteCFBadge"></span></div>
+      <div class="srow" id="siteIPRow" style="display:none"><span class="srow-lbl">&#128421; Resolved IP</span><span class="srow-val v-dim" id="siteIP">-</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- API KEYS -->
+<div class="panel" id="tab-keys">
+  <div class="osint-box"><strong>No keys needed for OSINT.</strong> Country, IP, ISP &amp; Cloudflare detection run free. Keys enable <strong>VirusTotal</strong> and <strong>AbuseIPDB</strong> scanning.</div>
+
+  <!-- VT -->
+  <div class="key-block">
+    <div class="key-lbl">&#128270; VirusTotal <span class="key-status ks-off" id="vtTag">NOT SET</span></div>
+    <div class="inp-row" id="vtInputRow">
+      <input class="inp" id="vtInp" type="password" placeholder="Paste VirusTotal API key..." autocomplete="off" spellcheck="false"/>
+      <button class="btn btn-p" id="vtSave">Save</button>
+    </div>
+    <div id="vtSavedArea" style="display:none;flex-direction:column;gap:7px">
+      <div class="key-saved"><div class="key-dot"></div><div class="key-mask" id="vtPreview"></div></div>
+      <div class="btns-row"><button class="btn btn-g" id="vtEdit">Edit</button><button class="btn btn-d" id="vtDel">Remove</button></div>
+    </div>
+  </div>
+
+  <!-- AbuseIPDB -->
+  <div class="key-block">
+    <div class="key-lbl">&#128680; AbuseIPDB <span class="key-status ks-off" id="abuseTag">NOT SET</span></div>
+    <div class="inp-row" id="abuseInputRow">
+      <input class="inp" id="abuseInp" type="password" placeholder="Paste AbuseIPDB API key..." autocomplete="off" spellcheck="false"/>
+      <button class="btn btn-p" id="abuseSave">Save</button>
+    </div>
+    <div id="abuseSavedArea" style="display:none;flex-direction:column;gap:7px">
+      <div class="key-saved"><div class="key-dot"></div><div class="key-mask" id="abusePreview"></div></div>
+      <div class="btns-row"><button class="btn btn-g" id="abuseEdit">Edit</button><button class="btn btn-d" id="abuseDel">Remove</button></div>
+    </div>
+  </div>
+
+
+  <!-- AI / LLM -->
+  <div class="key-block">
+    <div class="key-lbl">&#129302; AI Model <span class="key-status ks-off" id="llmTag">NOT SET</span></div>
+    <div class="key-hint">Used for AI-powered phishing analysis. Choose your provider and paste the API key.</div>
+
+    <!-- Provider + Model row (always visible) -->
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+      <select class="sel" id="llmProvider" style="flex:1">
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="mistral">Mistral</option>
+        <option value="groq">Groq</option>
+        <option value="openrouter">OpenRouter</option>
+        <option value="ollama">Ollama (local)</option>
+        <option value="lmstudio">LM Studio (local)</option>
+        <option value="custom">Custom URL (OpenAI-compat.)</option>
+      </select>
+    </div>
+    <div class="inp-row" id="llmModelRow" style="margin-bottom:2px">
+      <input class="inp" id="llmModel" type="text" placeholder="Model name, e.g. gpt-4o-mini" autocomplete="off" spellcheck="false" style="font-size:10.5px"/>
+    </div>
+    <div class="inp-row" id="llmCustomUrlRow" style="display:none;margin-bottom:2px">
+      <input class="inp" id="llmCustomUrl" type="text" placeholder="http://localhost:11434/api/chat  or  https://your-endpoint/v1/chat/completions" autocomplete="off" spellcheck="false" style="font-size:10.5px"/>
+    </div>
+
+    <!-- Key input -->
+    <div class="inp-row" id="llmInputRow">
+      <input class="inp" id="llmInp" type="password" placeholder="Paste API key..." autocomplete="off" spellcheck="false"/>
+      <button class="btn btn-p" id="llmSave">Save</button>
+    </div>
+    <div id="llmSavedArea" style="display:none;flex-direction:column;gap:7px">
+      <div class="key-saved"><div class="key-dot" style="background:#10a37f;box-shadow:0 0 5px #10a37f"></div><div class="key-mask" id="llmPreview"></div></div>
+      <div class="btns-row"><button class="btn btn-g" id="llmEdit">Edit</button><button class="btn btn-d" id="llmDel">Remove</button></div>
+    </div>
+  </div>
+
+  <!-- Telegram -->
+  <div class="key-block">
+    <div class="key-lbl">&#9992; Telegram <span class="key-status ks-off" id="tgTag">NOT SET</span></div>
+    <div class="key-hint">Send alerts to Telegram. Create a bot via <strong>@BotFather</strong>, then get your Chat ID from <strong>@userinfobot</strong>.</div>
+    <div style="font-size:10px;color:var(--dim2);letter-spacing:.06em;font-weight:600;text-transform:uppercase;margin-top:2px">Bot Token</div>
+    <div class="inp-row" id="tgTokenInputRow">
+      <input class="inp" id="tgTokenInp" type="password" placeholder="123456789:ABCdef..." autocomplete="off" spellcheck="false"/>
+      <button class="btn btn-p" id="tgTokenSave">Save</button>
+    </div>
+    <div id="tgTokenSavedArea" style="display:none;flex-direction:column;gap:7px">
+      <div class="key-saved"><div class="key-dot" style="background:var(--tg);box-shadow:0 0 5px var(--tg)"></div><div class="key-mask" id="tgTokenPreview"></div></div>
+      <div class="btns-row"><button class="btn btn-g" id="tgTokenEdit">Edit</button><button class="btn btn-d" id="tgTokenDel">Remove</button></div>
+    </div>
+    <div style="font-size:10px;color:var(--dim2);letter-spacing:.06em;font-weight:600;text-transform:uppercase;margin-top:4px">Chat ID</div>
+    <div class="inp-row" id="tgChatInputRow">
+      <input class="inp" id="tgChatInp" type="text" placeholder="-1001234567890" autocomplete="off" spellcheck="false"/>
+      <button class="btn btn-p" id="tgChatSave">Save</button>
+    </div>
+    <div id="tgChatSavedArea" style="display:none;flex-direction:column;gap:7px">
+      <div class="key-saved"><div class="key-dot" style="background:var(--tg);box-shadow:0 0 5px var(--tg)"></div><div class="key-mask" id="tgChatPreview"></div></div>
+      <div class="btns-row"><button class="btn btn-g" id="tgChatEdit">Edit</button><button class="btn btn-d" id="tgChatDel">Remove</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- RULES -->
+<div class="panel" id="tab-rules">
+  <div class="card">
+    <div class="card-hd"><span class="card-ico">&#127907;</span><span class="card-lbl">Phishing Detection</span><span class="ctag ct-blue">EMAIL ONLY</span></div>
+    <div class="card-body">
+      <div style="font-size:10.5px;color:var(--dim);line-height:1.55">Scans emails on <strong style="color:var(--txt)">Gmail, Outlook, Yahoo Mail, ProtonMail</strong> for phishing threats. Only activates while reading an email.</div>
+
+      <!-- Regex toggle -->
+      <div class="f-row" style="margin-top:4px">
+        <span class="f-lbl" style="display:flex;align-items:center;gap:6px">
+          &#128269; Regex URL Check
+          <span style="font-size:9px;color:var(--dim2);font-family:var(--mono)">(AbuseIPDB + VT)</span>
+        </span>
+        <span class="tog t-notif-on" id="phishRegexToggle">ON</span>
+      </div>
+      <div style="font-size:10px;color:var(--dim2);line-height:1.5;padding-left:2px;margin-top:-2px">Scans every link in an email via VirusTotal &amp; AbuseIPDB. Fires a notification if any vendor flags it or Abuse score &ge; 10%.</div>
+
+      <!-- LLM toggle -->
+      <div class="f-row" style="margin-top:6px">
+        <span class="f-lbl" style="display:flex;align-items:center;gap:6px">
+          &#129302; AI Analysis
+          <span class="key-status ks-off" id="llmPhishTag" style="font-size:9px">NEEDS KEY</span>
+        </span>
+        <span class="tog t-notif-off" id="phishLLMToggle">OFF</span>
+      </div>
+      <div style="font-size:10px;color:var(--dim2);line-height:1.5;padding-left:2px;margin-top:-2px">Shows an AI bar at the top of an open email. Click <em>Analyze</em> to get a 0-100% phishing probability from OpenAI.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd"><span class="card-ico">&#128276;</span><span class="card-lbl">Default Mode</span><span class="ctag ct-blue" id="defaultModeTag">GLOBAL</span></div>
+    <div class="card-body">
+      <div style="font-size:10.5px;color:var(--dim);line-height:1.55">Used when <strong style="color:var(--txt)">no country rules match</strong>, or when no countries are configured.</div>
+      <div class="f-row">
+        <span class="f-lbl">Chrome alerts</span>
+        <select class="sel" id="notifMode">
+          <option value="suspicious_only">Suspicious only</option>
+          <option value="all_events">All events</option>
+          <option value="off">Off</option>
+        </select>
+      </div>
+      <div class="f-row">
+        <span class="f-lbl" style="display:flex;align-items:center;gap:5px">&#9992; Telegram alerts</span>
+        <span class="tog t-tg-off" id="tgGlobalToggle">OFF</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd"><span class="card-ico">&#127758;</span><span class="card-lbl">Country Rules</span><span class="ctag ct-blue" id="rulesCountTag">0 countries</span></div>
+    <div class="card-body">
+      <div style="font-size:10.5px;color:var(--dim);line-height:1.55">When countries are listed, <strong style="color:var(--txt)">only those countries</strong> trigger alerts. Unlisted countries are silent.</div>
+      <div class="cr-hd">
+        <span class="cr-hd-lbl">Active Rules</span>
+        <button class="btn btn-p" id="addCountryBtn" style="height:28px;padding:0 11px;font-size:10px">+ Add Country</button>
+      </div>
+      <div class="add-row" id="addCountryRow">
+        <input class="ctry-inp" id="countrySearch" list="countrySuggest" placeholder="Country name or 2-letter code..." autocomplete="off"/>
+        <datalist id="countrySuggest"></datalist>
+        <button class="btn btn-p" id="confirmAddCountry" style="height:30px;padding:0 10px;font-size:10px">Add</button>
+        <button class="btn" id="cancelAddCountry" style="height:30px;padding:0 9px;font-size:12px;background:#1a2538;color:#b8cce0">X</button>
+      </div>
+      <div id="countryRulesList"><div class="no-rules" id="noRulesMsg">No rules yet - all countries use default mode</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- CACHE -->
+<div class="panel" id="tab-cache">
+  <div class="card">
+    <div class="card-hd"><span class="card-ico">&#128202;</span><span class="card-lbl">Cache Stats</span><span class="ctag ct-blue">14-DAY TTL</span></div>
+    <div class="card-body">
+      <div class="chips">
+        <span class="chip ch0" id="chipTotal">0 entries</span>
+        <span class="chip ch1" id="chipClean">0 clean</span>
+        <span class="chip ch2" id="chipSusp">0 susp</span>
+        <span class="chip ch3" id="chipMal">0 mal</span>
+        <span class="chip ch4" id="chipBlocked">0 blocked</span>
+      </div>
+      <div class="cache-foot"><button class="btn btn-d" id="clearBtn" style="height:30px;font-size:11px">Clear All Cache</button></div>
+    </div>
+  </div>
+</div>
+
+<footer class="ftr"><span>ElHunter</span><span class="v">v1.0.0</span></footer>
+<div class="toast" id="toast"></div>
+<div class="ov" id="statsOverlay">
+  <div class="ov-panel">
+    <div class="ov-hd"><span class="ov-title" id="statsPanelFilter"></span><button class="ov-close" id="statsClose">X</button></div>
+    <div class="ov-cols"><span>Domain / IP</span><span>Country</span><span>VT</span><span>CF</span></div>
+    <div class="ov-rows" id="statsRows"></div>
+  </div>
+</div>
+<script src="popup.js"></script>
+</body>
+</html>
