@@ -52,6 +52,17 @@ function extractUrls(text) {
   const raw = text.match(URL_RE) || [];
   return [...new Set(raw.map(function(u) { return u.replace(/[.,;:!?)\]]+$/, ''); }))];
 }
+function extractUrlsFromDOM(emailBody) {
+  // Collect hrefs from all <a> and <button> elements inside email body
+  const hrefs = [];
+  try {
+    emailBody.querySelectorAll('a[href], area[href]').forEach(function(el) {
+      const href = el.getAttribute('href');
+      if (href && /^https?:\/\//i.test(href)) hrefs.push(href.replace(/[.,;:!?)\]]+$/, ''));
+    });
+  } catch(e) {}
+  return hrefs;
+}
 function getHost(url) { try { return new URL(url).hostname; } catch { return null; } }
 
 // ─── LLM bar helpers ──────────────────────────────────────────
@@ -105,6 +116,30 @@ function showLLMResult(bar, score, reason, isError) {
       });
     }
   }
+}
+
+function showNoKeysBar() {
+  var old = document.getElementById('eh-regex-bar');
+  if (old) old.remove();
+
+  var bar = document.createElement('div');
+  bar.id = 'eh-regex-bar';
+  bar.setAttribute('style',
+    'position:fixed;top:' + (document.getElementById('eh-llm-bar') ? '44px' : '0') + ';left:0;right:0;z-index:2147483646;' +
+    'background:linear-gradient(90deg,#1a1200,#251800);border-bottom:1px solid rgba(245,166,35,.3);padding:7px 16px;' +
+    'display:flex;align-items:center;gap:10px;' +
+    'font-family:system-ui,-apple-system,sans-serif;font-size:12px;' +
+    'color:#d8e8f8;box-shadow:0 2px 12px rgba(0,0,0,.5);box-sizing:border-box;');
+  bar.innerHTML =
+    '<span style="flex:1">' +
+      '<strong style="color:#f5a623">⚠ API keys not configured</strong>' +
+      '<span style="color:#7a94b0;font-size:10px;margin-left:10px">VirusTotal / AbuseIPDB keys missing — link scan unavailable. Add keys in ElHunter settings.</span>' +
+    '</span>' +
+    '<button id="eh-regex-close" style="border:none;border-radius:6px;padding:4px 10px;cursor:pointer;' +
+    'font-size:11px;font-weight:600;background:transparent;color:#7a94b0;' +
+    'border:1px solid rgba(255,255,255,.12);flex-shrink:0;">✕</button>';
+  document.body.prepend(bar);
+  document.getElementById('eh-regex-close').addEventListener('click', function() { bar.remove(); });
 }
 
 function showRegexResult(allHosts, flagged) {
@@ -213,14 +248,21 @@ function onEmailOpened(emailBody) {
 
     // ── Regex URL check (default ON) ──────────────────────────
     if (s.regexEnabled) {
-      var urls  = extractUrls(text);
-      var hosts = urls.map(getHost).filter(function(h) {
+      // Collect URLs from both plain text AND href attributes (catches button/link redirects)
+      var textUrls  = extractUrls(text);
+      var domUrls   = extractUrlsFromDOM(emailBody);
+      var allUrls   = [...new Set([...textUrls, ...domUrls])];
+      var hosts = allUrls.map(getHost).filter(function(h) {
         return h && h !== 'localhost' && h !== '127.0.0.1';
       });
       hosts = [...new Set(hosts)];
       if (hosts.length > 0) {
         chrome.runtime.sendMessage({ type: 'CHECK_EMAIL_URLS', hosts: hosts }, function(res) {
           if (!res) return;
+          if (res.noKeys) {
+            showNoKeysBar();
+            return;
+          }
           showRegexResult(res.all || hosts.map(function(h){ return {host:h,clean:true}; }), res.flagged || []);
         });
       }
@@ -233,14 +275,22 @@ function onEmailOpened(emailBody) {
   });
 }
 
-// ─── DOM observer — detect email opens ────────────────────────
+// ─── DOM observer — detect email opens AND closes ─────────────
 var debounceTimer = null;
 var observer = new MutationObserver(function() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(function() {
     var body = getEmailBody();
-    if (body) onEmailOpened(body);
-  }, 900);
+    if (body) {
+      onEmailOpened(body);
+    } else {
+      // Email closed / navigated away — remove all bars and reset
+      removeLLMBar();
+      var regexBar = document.getElementById('eh-regex-bar');
+      if (regexBar) regexBar.remove();
+      lastEmailText = ''; // reset so next email triggers fresh scan
+    }
+  }, 600);
 });
 observer.observe(document.body, { childList: true, subtree: true });
 

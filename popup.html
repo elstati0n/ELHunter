@@ -42,7 +42,7 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
 .tab-ico{font-size:12px}
 
 /* PANELS */
-.panel{display:none;padding:12px 13px 16px;flex-direction:column;gap:10px}
+.panel{display:none;padding:12px 13px 16px;flex-direction:column;gap:10px;flex:1}
 .panel.active{display:flex}
 
 /* SITE */
@@ -52,10 +52,14 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
 .spin-row{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:11px;padding:4px 0}
 .spin{width:11px;height:11px;border-radius:50%;border:2px solid rgba(59,158,255,.18);border-top-color:var(--blue);animation:rot .7s linear infinite;flex-shrink:0;display:inline-block}
 @keyframes rot{to{transform:rotate(360deg)}}
-.srow{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.srow{display:flex;align-items:center;justify-content:space-between;padding:13px 4px;border-bottom:1px solid rgba(255,255,255,.06)}
 .srow:last-child{border-bottom:none}
 .srow-lbl{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:5px;flex-shrink:0}
 .srow-val{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--txt);text-align:right;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow-link{cursor:pointer;transition:background .15s,border-color .15s;border-radius:6px;padding:10px 5px;margin:-4px -5px}
+.srow-link:hover{background:rgba(59,158,255,.08);border-radius:6px}
+.srow-link:hover .srow-val,.srow-link:hover .srow-lbl{color:var(--blue)}
+.srow-link:hover .bdg{filter:brightness(1.2)}
 .v-bad{color:var(--red)}.v-ok{color:var(--green)}.v-warn{color:var(--amber)}.v-dim{color:var(--dim)}
 .bdg{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:10px;font-family:var(--mono);font-size:9.5px;font-weight:700}
 .bdg-clean{background:var(--green-g);color:var(--green);border:1px solid rgba(13,204,136,.25)}
@@ -165,19 +169,28 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
 .ftr span{font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:.07em}
 .ftr .v{color:var(--blue)}
 
-/* OVERLAY */
-.ov{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:100;overflow-y:auto;display:none}
-.ov.show{display:block}
-.ov-panel{background:#0f1520;border-radius:12px;margin:12px;border:1px solid rgba(255,255,255,.08);overflow:hidden}
-.ov-hd{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.06)}
-.ov-title{font-size:12px;font-weight:700}
-.ov-close{background:none;border:none;color:var(--dim);font-size:17px;cursor:pointer;padding:2px 6px}
-.ov-cols{display:grid;grid-template-columns:1fr 80px 60px 50px;padding:6px 16px;border-bottom:1px solid rgba(255,255,255,.04)}
-.ov-cols span{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em}
+/* OVERLAY → now inline, no modal */
+.ov-hd{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.06)}
+.ov-title{font-size:11px;font-weight:700}
+.ov-close{background:none;border:none;color:var(--dim);font-size:14px;cursor:pointer;padding:2px 4px;line-height:1}
+.ov-filters{display:flex;gap:4px;flex-wrap:wrap}
+.ov-pill{cursor:pointer;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:3px 8px;border-radius:20px;border:1px solid rgba(255,255,255,.1);color:var(--dim);background:transparent;transition:all .15s;white-space:nowrap}
+.ov-pill:hover{background:rgba(255,255,255,.05)}
+.ov-pill.active{background:rgba(255,255,255,.08);border-color:currentColor}
+.ov-cols{display:grid;grid-template-columns:minmax(0,1fr) 56px 46px 50px 24px 58px;padding:5px 14px;border-bottom:1px solid rgba(255,255,255,.04);gap:4px}
+.ov-cols span{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;white-space:nowrap}
 .ov-cols span:not(:first-child){text-align:center}
-.ov-rows{max-height:320px;overflow-y:auto}
-.ov-row{display:grid;grid-template-columns:1fr 80px 60px 50px;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center}
+.ov-rows{overflow-y:auto}
+.ov-row{display:grid;grid-template-columns:minmax(0,1fr) 56px 46px 50px 24px 58px;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center;gap:4px}
 .ov-row:last-child{border-bottom:none}
+.ov-actions{display:flex;gap:4px;justify-content:center;align-items:center}
+.ov-del{background:rgba(255,68,102,.15);border:1px solid rgba(255,68,102,.35);color:var(--red);cursor:pointer;width:26px;height:26px;border-radius:6px;transition:all .15s;display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0}
+.ov-del:hover{background:rgba(255,68,102,.35);border-color:rgba(255,68,102,.7);transform:scale(1.1)}
+.ov-del svg,.ov-lock-toggle svg{display:block;flex-shrink:0}
+.ov-lock-toggle{background:rgba(77,98,133,.15);border:1px solid rgba(77,98,133,.3);color:var(--dim);cursor:pointer;width:26px;height:26px;border-radius:6px;transition:all .15s;display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0}
+.ov-lock-toggle:hover{background:rgba(13,204,136,.15);border-color:rgba(13,204,136,.4);color:var(--green);transform:scale(1.1)}
+.ov-lock-toggle.is-unlocked{background:rgba(13,204,136,.12);border:1px solid rgba(13,204,136,.35);color:var(--green)}
+.ov-lock-toggle.is-unlocked:hover{background:rgba(255,68,102,.15);border-color:rgba(255,68,102,.4);color:var(--red)}
 </style>
 </head>
 <body>
@@ -209,11 +222,11 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
     <div class="spin-row" id="siteLoading"><div class="spin"></div><span>Analyzing...</span></div>
     <div id="siteRows" style="display:none">
       <div class="srow"><span class="srow-lbl">&#128737; Threat Level</span><span id="siteLevelBadge"></span></div>
-      <div class="srow"><span class="srow-lbl">&#128270; VirusTotal</span><span class="srow-val" id="siteVT">-</span></div>
-      <div class="srow"><span class="srow-lbl">&#128680; AbuseIPDB</span><span class="srow-val v-dim" id="siteAbuse">-</span></div>
-      <div class="srow"><span class="srow-lbl">&#127758; Country</span><span class="srow-val" id="siteCountry">-</span></div>
-      <div class="srow"><span class="srow-lbl">&#9729; Cloudflare</span><span id="siteCFBadge"></span></div>
-      <div class="srow" id="siteIPRow" style="display:none"><span class="srow-lbl">&#128421; Resolved IP</span><span class="srow-val v-dim" id="siteIP">-</span></div>
+      <div class="srow srow-link" id="siteVTRow"><span class="srow-lbl">&#128270; VirusTotal</span><span class="srow-val" id="siteVT">-</span></div>
+      <div class="srow srow-link" id="siteAbuseRow"><span class="srow-lbl">&#128680; AbuseIPDB</span><span class="srow-val v-dim" id="siteAbuse">-</span></div>
+      <div class="srow srow-link" id="siteCountryRow"><span class="srow-lbl">&#127758; Country</span><span class="srow-val" id="siteCountry">-</span></div>
+      <div class="srow srow-link" id="siteCFRow"><span class="srow-lbl">&#9729; Cloudflare</span><span id="siteCFBadge"></span></div>
+      <div class="srow srow-link" id="siteIPRow" style="display:none"><span class="srow-lbl">&#128421; Resolved IP</span><span class="srow-val v-dim" id="siteIP">-</span></div>
     </div>
   </div>
 </div>
@@ -393,17 +406,24 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
       <div class="cache-foot"><button class="btn btn-d" id="clearBtn" style="height:30px;font-size:11px">Clear All Cache</button></div>
     </div>
   </div>
+  <!-- Inline entries panel - expands popup naturally -->
+  <div id="inlineStats" style="display:none">
+    <div class="card">
+      <div class="card-hd" style="justify-content:space-between">
+        <span class="ov-title" id="inlineTitle" style="font-size:11px;font-weight:700"></span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="ov-filters" id="ovFilters" style="padding:0;border:none"></div>
+          <button class="ov-close" id="inlineClose" style="font-size:14px;line-height:1">✕</button>
+        </div>
+      </div>
+      <div class="ov-cols" style="padding:5px 14px"></div>
+      <div id="statsRows"></div>
+    </div>
+  </div>
 </div>
 
 <footer class="ftr"><span>ElHunter</span><span class="v">v1.0.0</span></footer>
 <div class="toast" id="toast"></div>
-<div class="ov" id="statsOverlay">
-  <div class="ov-panel">
-    <div class="ov-hd"><span class="ov-title" id="statsPanelFilter"></span><button class="ov-close" id="statsClose">X</button></div>
-    <div class="ov-cols"><span>Domain / IP</span><span>Country</span><span>VT</span><span>CF</span></div>
-    <div class="ov-rows" id="statsRows"></div>
-  </div>
-</div>
 <script src="popup.js"></script>
 </body>
 </html>

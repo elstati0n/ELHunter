@@ -17,6 +17,13 @@ document.querySelectorAll('.tab').forEach(function(btn) {
     chrome.storage.local.set({ eh_last_tab: this.dataset.tab });
   });
 });
+// Persist active tab even when popup closes without clicking a tab
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') {
+    var activeTab = document.querySelector('.tab.active');
+    if (activeTab) chrome.storage.local.set({ eh_last_tab: activeTab.dataset.tab });
+  }
+});
 chrome.storage.local.get('eh_last_tab', function(r) {
   var name = r.eh_last_tab;
   if (name && name !== 'main') {
@@ -41,6 +48,8 @@ function updateDot() {
 
 // ── Site analysis ─────────────────────────────────────────────
 var pollTimer = null;
+var currentHost = '';
+var currentResolvedIP = '';
 function hideSite() {
   document.getElementById('siteWrap').style.display = 'none';
   document.getElementById('siteEmpty').style.display = 'block';
@@ -74,9 +83,15 @@ function applyEnrich(res) {
     else if(sc<20){a.textContent=sc+'% confidence';a.className='srow-val v-warn';}
     else{a.textContent=sc+'% confidence';a.className='srow-val v-bad';}
   }
-  if (res.resolvedIP) { document.getElementById('siteIP').textContent=res.resolvedIP; document.getElementById('siteIPRow').style.display='flex'; }
+  if (res.resolvedIP) {
+    currentResolvedIP = res.resolvedIP;
+    document.getElementById('siteIP').textContent=res.resolvedIP;
+    document.getElementById('siteIPRow').style.display='flex';
+  }
 }
 function renderSite(host, r) {
+  currentHost = host;
+  if (r.resolvedIP) currentResolvedIP = r.resolvedIP;
   document.getElementById('siteLoading').style.display = 'none';
   document.getElementById('siteRows').style.display = 'block';
   var lm={clean:['bdg bdg-clean','CLEAN'],suspicious:['bdg bdg-warn','SUSPICIOUS'],malicious:['bdg bdg-bad','MALICIOUS'],blocked:['bdg bdg-blocked','BLOCKED'],unknown:['bdg bdg-dim','UNKNOWN']};
@@ -169,6 +184,27 @@ function updateTgTag() {
 
 // ── Cache ─────────────────────────────────────────────────────
 var cacheEntries=[];
+var activeFilter='all';
+
+function renderFilterPills() {
+  var filtersEl = document.getElementById('ovFilters');
+  if (!filtersEl) return;
+  var pills = [
+    {k:'all',      label:'All',      color:'#94a3b8'},
+    {k:'clean',    label:'Clean',    color:'#10b981'},
+    {k:'suspicious',label:'Susp',   color:'#f59e0b'},
+    {k:'malicious',label:'Mal',     color:'#ef4444'},
+    {k:'blocked',  label:'Blocked', color:'#ff8c00'}
+  ];
+  filtersEl.innerHTML = pills.map(function(p) {
+    var isAct = activeFilter === p.k;
+    return '<span class="ov-pill' + (isAct ? ' active' : '') + '" data-fk="' + p.k + '" style="color:' + p.color + (isAct ? ';border-color:' + p.color : '') + '">' + p.label + '</span>';
+  }).join('');
+  filtersEl.querySelectorAll('.ov-pill').forEach(function(el) {
+    el.addEventListener('click', function() { activeFilter = this.dataset.fk; openStats(activeFilter); });
+  });
+}
+
 function loadCache(){
   chrome.runtime.sendMessage({type:'GET_CACHE_STATS'}, function(res){
     if(!res)return; cacheEntries=res.entries||[];
@@ -180,30 +216,123 @@ function loadCache(){
     document.getElementById('chipBlocked').textContent=bl+' blocked';
   });
 }
+// Track which hosts are currently unblocked (for toggle display)
+var unblockedHosts = new Set();
+var tempAllowedHosts = new Set(); // Proceed Anyway — 1 hour temp
+chrome.runtime.sendMessage({type:'GET_UNBLOCKED_HOSTS'}, function(res) {
+  if (res && res.hosts) res.hosts.forEach(function(h){ unblockedHosts.add(h); });
+});
+chrome.runtime.sendMessage({type:'GET_TEMP_ALLOWED_HOSTS'}, function(res) {
+  if (res && res.hosts) res.hosts.forEach(function(h){ tempAllowedHosts.add(h); });
+});
+
 function openStats(filter){
-  var list=filter==='all'?cacheEntries:cacheEntries.filter(function(x){return x.level===filter;});
+  if (filter) activeFilter = filter;
+  var list = activeFilter==='all' ? cacheEntries : cacheEntries.filter(function(x){return x.level===activeFilter;});
   var labels={all:'All Entries',clean:'Clean',suspicious:'Suspicious',malicious:'Malicious',blocked:'Blocked'};
   var colors={all:'#94a3b8',clean:'#10b981',suspicious:'#f59e0b',malicious:'#ef4444',blocked:'#ff8c00'};
-  var sf=document.getElementById('statsPanelFilter'); sf.textContent=labels[filter]||filter; sf.style.color=colors[filter]||'#94a3b8';
+  var sf=document.getElementById('inlineTitle');
+  sf.textContent=labels[activeFilter]||activeFilter; sf.style.color=colors[activeFilter]||'#94a3b8';
+  renderFilterPills();
   var rows=document.getElementById('statsRows');
-  if(!list.length){rows.innerHTML='<div style="padding:20px;text-align:center;color:#7a94b0;font-size:11px">No entries</div>';return;}
-  rows.innerHTML=list.map(function(x){
-    var lc=x.level==='clean'?'#10b981':x.level==='suspicious'?'#f59e0b':x.level==='malicious'?'#ef4444':x.level==='blocked'?'#ff8c00':'#64748b';
-    var dot='<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+lc+';margin-right:5px"></span>';
-    var dm=x.target.length>24?x.target.slice(0,22)+'...':x.target;
-    var flag=flagEmoji(x.countryCode); var ctry=flag?(flag+' '+x.countryCode):(x.country||'-');
-    var vtTxt=x.vtTotal>0?(x.vtFlagged+'/'+x.vtTotal):'-';
-    var vtColor=x.vtFlagged>=3?'#ef4444':x.vtFlagged>0?'#f59e0b':'#10b981';
-    var cfTxt=x.cloudflare===true?'C':x.cloudflare===false?'D':'-';
-    var diff=x.ts?Math.round((Date.now()-x.ts)/60000):0; var ago=diff<60?diff+'m ago':Math.round(diff/60)+'h ago';
-    return '<div class="ov-row"><div><div style="display:flex;align-items:center">'+dot+'<span style="font-family:monospace;font-size:10.5px;color:#e2e8f0">'+dm+'</span></div>'
-      +(x.resolvedIP?'<div style="font-size:9px;color:#7a94b0;margin-top:2px">'+x.resolvedIP+'</div>':'')
-      +'<div style="font-size:9px;color:#7a94b0;margin-top:1px">'+ago+'</div></div>'
-      +'<div style="text-align:center;font-size:11px">'+ctry+'</div>'
-      +'<div style="text-align:center;font-size:10.5px;font-weight:600;color:'+vtColor+'">'+vtTxt+'</div>'
-      +'<div style="text-align:right;font-size:13px">'+cfTxt+'</div></div>';
-  }).join('');
-  document.getElementById('statsOverlay').classList.add('show');
+  var inlineEl = document.getElementById('inlineStats');
+  var inlineTitleEl = document.getElementById('inlineTitle');
+  // Render column headers
+  var colsEl = inlineEl.querySelector('.ov-cols');
+  colsEl.innerHTML = '<span>Domain / IP</span><span style="text-align:center">Country</span><span style="text-align:center">VT</span><span style="text-align:center">Abuse</span><span style="text-align:center">CF</span><span style="text-align:center">Actions</span>';
+
+  if(!list.length){rows.innerHTML='<div style="padding:16px;text-align:center;color:#7a94b0;font-size:11px">No entries</div>';}
+  else {
+    rows.innerHTML=list.map(function(x){
+      var lc=x.level==='clean'?'#10b981':x.level==='suspicious'?'#f59e0b':x.level==='malicious'?'#ef4444':x.level==='blocked'?'#ff8c00':'#64748b';
+      var dot='<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+lc+';margin-right:5px;flex-shrink:0"></span>';
+      var dm=x.target.length>22?x.target.slice(0,20)+'…':x.target;
+      var flag=flagEmoji(x.countryCode); var ctry=flag?(flag+' '+x.countryCode):(x.country||'-');
+      var vtTxt=x.vtTotal>0?(x.vtFlagged+'/'+x.vtTotal):'-';
+      var vtColor=x.vtFlagged>=3?'#ef4444':x.vtFlagged>0?'#f59e0b':'#10b981';
+      var abuseTxt=x.abuseScore!=null?x.abuseScore+'%':'-';
+      var abuseColor=x.abuseScore>=40?'#ef4444':x.abuseScore>=10?'#f59e0b':x.abuseScore!=null&&x.abuseScore===0?'#10b981':'#7a94b0';
+      var cfTxt=x.cloudflare===true?'C':x.cloudflare===false?'D':'-';
+      var diff=x.ts?Math.round((Date.now()-x.ts)/60000):0; var ago=diff<60?diff+'m ago':Math.round(diff/60)+'h ago';
+      var canToggle = (x.level==='malicious'||x.level==='blocked');
+      var isUnblocked = unblockedHosts.has(x.target);
+      var isTempAllowed = tempAllowedHosts.has(x.target);
+      var isOpen = isUnblocked || isTempAllowed;
+      var toggleBtn = canToggle
+        ? '<button class="ov-lock-toggle '+(isOpen?'is-unlocked':'')+'" data-target="'+x.target+'" data-unblocked="'+(isOpen?'1':'0')+'" title="'+(isOpen?'Re-lock \u2014 will block on next visit':'Unlock \u2014 allow visits to this site')+'">'
+          + (isOpen
+            ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>'
+            : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>')
+          + '</button>'
+        : '';
+      var actionBtns = '<div class="ov-actions">'
+        + '<button class="ov-del" data-target="'+x.target+'" title="Remove from cache">'
+        + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>'
+        + '</button>'+toggleBtn+'</div>';
+      return '<div class="ov-row" data-target="'+x.target+'"><div><div style="display:flex;align-items:center;min-width:0">'+dot+'<span style="font-family:monospace;font-size:10.5px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+x.target+'">'+dm+'</span></div>'
+        +(x.resolvedIP?'<div style="font-size:9px;color:#7a94b0;margin-top:2px">'+x.resolvedIP+'</div>':'')
+        +'<div style="font-size:9px;color:#7a94b0;margin-top:1px">'+ago+'</div></div>'
+        +'<div style="text-align:center;font-size:11px">'+ctry+'</div>'
+        +'<div style="text-align:center;font-size:10.5px;font-weight:600;color:'+vtColor+'">'+vtTxt+'</div>'
+        +'<div style="text-align:center;font-size:10.5px;font-weight:600;color:'+abuseColor+'">'+abuseTxt+'</div>'
+        +'<div style="text-align:center;font-size:13px">'+cfTxt+'</div>'
+        +actionBtns+'</div>';
+    }).join('');
+
+    // Delete handlers
+    rows.querySelectorAll('.ov-del').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var target = this.dataset.target;
+        chrome.runtime.sendMessage({type:'DELETE_CACHE_ENTRY', target: target}, function() {
+          // Also reblock if was unblocked
+          if (unblockedHosts.has(target)) {
+            chrome.runtime.sendMessage({type:'REBLOCK_HOST', host: target});
+            unblockedHosts.delete(target);
+          }
+          cacheEntries = cacheEntries.filter(function(x){ return x.target !== target; });
+          loadCache();
+          openStats(activeFilter);
+          toast('Removed: ' + target);
+        });
+      });
+    });
+
+    // Lock toggle handlers — NO cache deletion, just block/unblock toggle
+    rows.querySelectorAll('.ov-lock-toggle').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var target = this.dataset.target;
+        var isCurrentlyUnblocked = this.dataset.unblocked === '1';
+        if (isCurrentlyUnblocked) {
+          // Re-lock it (works for both permanent unblock and temp Proceed Anyway)
+          chrome.runtime.sendMessage({type:'REBLOCK_HOST', host: target}, function() {
+            unblockedHosts.delete(target);
+            tempAllowedHosts.delete(target);
+            openStats(activeFilter);
+            toast('Re-locked: ' + target);
+          });
+        } else {
+          // Unlock it — stays malicious in cache, DNR removed, open site now
+          chrome.runtime.sendMessage({type:'UNBLOCK_HOST', host: target}, function() {
+            unblockedHosts.add(target);
+            openStats(activeFilter);
+            toast('Unlocked — opening ' + target);
+            // Open site immediately after unlock
+            chrome.tabs.query({active:true, currentWindow:true}, function(tabs) {
+              var url = 'https://' + target;
+              if (tabs && tabs[0]) {
+                chrome.tabs.update(tabs[0].id, {url: url});
+              } else {
+                chrome.tabs.create({url: url});
+              }
+            });
+          });
+        }
+      });
+    });
+  }
+  document.getElementById('inlineStats').style.display = 'block';
 }
 
 // ── Rules ─────────────────────────────────────────────────────
@@ -354,8 +483,20 @@ function initRules(){
 // ── Boot ──────────────────────────────────────────────────────
 updateDot(); loadCache(); loadCurrentSite(); initRules();
 
-initKey({storageKey:'vtApiKey',inpId:'vtInp',saveId:'vtSave',inputRowId:'vtInputRow',savedAreaId:'vtSavedArea',previewId:'vtPreview',editId:'vtEdit',delId:'vtDel',tagId:'vtTag',label:'VirusTotal',onChange:loadCurrentSite});
-initKey({storageKey:'abuseApiKey',inpId:'abuseInp',saveId:'abuseSave',inputRowId:'abuseInputRow',savedAreaId:'abuseSavedArea',previewId:'abusePreview',editId:'abuseEdit',delId:'abuseDel',tagId:'abuseTag',label:'AbuseIPDB',onChange:loadCurrentSite});
+initKey({storageKey:'vtApiKey',inpId:'vtInp',saveId:'vtSave',inputRowId:'vtInputRow',savedAreaId:'vtSavedArea',previewId:'vtPreview',editId:'vtEdit',delId:'vtDel',tagId:'vtTag',label:'VirusTotal',onChange:function(){
+  chrome.runtime.sendMessage({type:'CLEAR_STALE_CACHE',keyType:'vt'},function(r){
+    if(r&&r.cleared>0)toast('Cleared '+r.cleared+' stale cache entries');
+    loadCache();
+  });
+  loadCurrentSite();
+}});
+initKey({storageKey:'abuseApiKey',inpId:'abuseInp',saveId:'abuseSave',inputRowId:'abuseInputRow',savedAreaId:'abuseSavedArea',previewId:'abusePreview',editId:'abuseEdit',delId:'abuseDel',tagId:'abuseTag',label:'AbuseIPDB',onChange:function(){
+  chrome.runtime.sendMessage({type:'CLEAR_STALE_CACHE',keyType:'abuse'},function(r){
+    if(r&&r.cleared>0)toast('Cleared '+r.cleared+' stale cache entries');
+    loadCache();
+  });
+  loadCurrentSite();
+}});
 initKey({storageKey:'tgBotToken',inpId:'tgTokenInp',saveId:'tgTokenSave',inputRowId:'tgTokenInputRow',savedAreaId:'tgTokenSavedArea',previewId:'tgTokenPreview',editId:'tgTokenEdit',delId:'tgTokenDel',tagId:'tgTag',label:'Telegram Token',onChange:updateTgTag});
 initKey({storageKey:'tgChatId',inpId:'tgChatInp',saveId:'tgChatSave',inputRowId:'tgChatInputRow',savedAreaId:'tgChatSavedArea',previewId:'tgChatPreview',editId:'tgChatEdit',delId:'tgChatDel',tagId:'tgTag',label:'Telegram Chat ID',onChange:updateTgTag});
 updateTgTag();
@@ -368,8 +509,7 @@ document.getElementById('chipBlocked').addEventListener('click',function(){openS
 document.getElementById('clearBtn').addEventListener('click',function(){
   chrome.runtime.sendMessage({type:'CLEAR_CACHE'},function(res){if(res&&res.ok){toast('Cleared '+res.count+' entries');loadCache();loadCurrentSite();}});
 });
-document.getElementById('statsClose').addEventListener('click',function(){document.getElementById('statsOverlay').classList.remove('show');});
-document.getElementById('statsOverlay').addEventListener('click',function(e){if(e.target===this)this.classList.remove('show');});
+document.getElementById('inlineClose').addEventListener('click',function(){document.getElementById('inlineStats').style.display='none';});
 
 // ═══════════════════════════════════════════════════════════════
 // PHISHING SETTINGS — added block (existing code above untouched)
@@ -624,3 +764,28 @@ function initPhishing() {
 }
 
 initPhishing();
+
+// ── Row click handlers (open external links) ──────────────────
+function isIPAddr(h) { return /^(\d{1,3}\.){3}\d{1,3}$/.test(h); }
+function openTab(url) { chrome.tabs.create({ url: url }); }
+
+document.getElementById('siteVTRow').addEventListener('click', function() {
+  if (!currentHost) return;
+  var path = isIPAddr(currentHost) ? 'ip-address/' : 'domain/';
+  openTab('https://www.virustotal.com/gui/' + path + currentHost);
+});
+
+document.getElementById('siteAbuseRow').addEventListener('click', function() {
+  if (!currentHost) return;
+  openTab('https://www.abuseipdb.com/check/' + currentHost);
+});
+
+function openWhois() {
+  var target = currentResolvedIP || currentHost;
+  if (!target) return;
+  openTab('https://www.whois.com/whois/' + target);
+}
+
+document.getElementById('siteCountryRow').addEventListener('click', openWhois);
+document.getElementById('siteCFRow').addEventListener('click', openWhois);
+document.getElementById('siteIPRow').addEventListener('click', openWhois);

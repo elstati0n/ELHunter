@@ -5,9 +5,92 @@ const CACHE_PFX = 'eh_';
 const SKIP      = new Set(['localhost','127.0.0.1','::1','0.0.0.0']);
 const IN_FLIGHT      = new Map();
 const LAST_URL       = new Map();
-const ALLOW_ONCE     = new Set();
+const ALLOWED_HOSTS  = new Map();   // host → expiry ms (Proceed Anyway = 1 hour)
 const NOTIF_SENT     = new Map();
 const PHASE2_RUNNING = new Set();
+
+const ALLOW_TTL = 60 * 60 * 1000; // 1 hour
+function isTemporarilyAllowed(host) {
+  const exp = ALLOWED_HOSTS.get(host);
+  if (!exp) return false;
+  if (Date.now() > exp) { ALLOWED_HOSTS.delete(host); return false; }
+  return true;
+}
+
+// Persistent host allowlist (user clicked "Unblock" from cache)
+let UNBLOCKED_HOSTS = new Set();
+async function saveUnblocked() {
+  await chrome.storage.local.set({ eh_unblocked: [...UNBLOCKED_HOSTS] });
+}
+async function loadUnblocked() {
+  try {
+    const r = await chrome.storage.local.get('eh_unblocked');
+    if (Array.isArray(r.eh_unblocked)) r.eh_unblocked.forEach(h => UNBLOCKED_HOSTS.add(h));
+  } catch {}
+}
+
+// ─── declarativeNetRequest helpers ────────────────────────────────────────────
+function hostToRuleId(host) {
+  let h = 5381;
+  for (let i = 0; i < host.length; i++) h = (((h << 5) + h) + host.charCodeAt(i)) >>> 0;
+  return (h % 900000) + 1000;
+}
+async function addDNRBlock(host, origUrl, entry) {
+  try {
+    const p = new URLSearchParams({
+      url: origUrl || 'https://'+host,
+      vtM: entry.vt?.malicious ?? 0, vtS: entry.vt?.suspicious ?? 0, vtTotal: entry.vt?.total ?? 0,
+      abuseS: entry.abuse?.score ?? 0, country: entry.country || '',
+      isp: entry.isp || entry.abuse?.isp || '', ip: entry.resolvedIP || '',
+      cf: entry.cloudflare===true?'1':entry.cloudflare===false?'0':'',
+      blockReason: 'VirusTotal / AbuseIPDB: malicious'
+    });
+    const rId = hostToRuleId(host);
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [rId],
+      addRules: [{
+        id: rId, priority: 1,
+        action: { type: 'redirect', redirect: { url: chrome.runtime.getURL('blocked.html')+'?'+p } },
+        condition: { requestDomains: [host], resourceTypes: ['main_frame'] }
+      }]
+    });
+  } catch(e) { console.warn('[EH DNR add]', host, e.message); }
+}
+async function removeDNRBlock(host) {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [hostToRuleId(host)] });
+  } catch(e) { console.warn('[EH DNR remove]', host, e.message); }
+}
+
+// ─── Restore DNR rules immediately when SW starts ─────────────────────────────
+// Called at TOP LEVEL so it runs the instant the service worker loads —
+// before any navigation events can fire. onInstalled/onStartup are too late.
+async function restoreDNRRules() {
+  try {
+    const [allStorage] = await Promise.all([
+      chrome.storage.local.get(null),
+      loadUnblocked()   // also loads UNBLOCKED_HOSTS in same pass
+    ]);
+    const promises = [];
+    for (const [k, v] of Object.entries(allStorage)) {
+      if (!k.startsWith(CACHE_PFX)) continue;
+      if (v.level !== 'malicious') continue;
+      const host = k.slice(CACHE_PFX.length);
+      if (UNBLOCKED_HOSTS.has(host)) continue;
+      if (Date.now() - (v.ts || 0) > CACHE_TTL) continue;
+      promises.push(addDNRBlock(host, 'https://' + host, v));
+    }
+    if (promises.length) await Promise.allSettled(promises);
+    console.log('[EH] DNR restored:', promises.length, 'rules');
+  } catch(e) { console.warn('[EH] restoreDNRRules:', e.message); }
+}
+
+// ← TOP-LEVEL CALL: runs immediately when service worker starts, not in any handler
+restoreDNRRules();
+
+// onInstalled/onStartup as secondary safety net (e.g. after browser restart)
+chrome.runtime.onStartup.addListener(() => restoreDNRRules().catch(() => {}));
+chrome.runtime.onInstalled.addListener(() => restoreDNRRules().catch(() => {}));
 
 // ─── Settings ─────────────────────────────────────────────────
 async function getSettings() {
@@ -137,7 +220,7 @@ async function geoLookup(host){
 function classify(vt, abuse) {
   const vtBad = vt    ? (vt.malicious + vt.suspicious) : 0;
   const score  = abuse ? abuse.score : 0;
-  if (vtBad >= 4 || score >= 40) return 'malicious';
+  if (vtBad >= 4 || score >= 55) return 'malicious';
   if (vtBad >= 1 || score > 0)   return 'suspicious';
   return 'clean';
 }
@@ -247,7 +330,10 @@ async function phase2(host, tabId, origUrl) {
         const keys = await chrome.storage.sync.get(['abuseApiKey']);
         if (keys.abuseApiKey && !entry.abuse) {
           const ar = await checkAbuse(resolvedIP, keys.abuseApiKey);
-          if (ar) { entry.abuse = ar; entry.level = classify(entry.vt, ar); }
+          if (ar) {
+            entry.abuse = ar;
+            entry.level = classify(entry.vt, ar);
+          }
         }
       }
 
@@ -259,6 +345,27 @@ async function phase2(host, tabId, origUrl) {
       entry.enriched    = true;
       await cacheSet(host, entry);
       console.log('[EH P2]', host, '| CC:', entry.countryCode, '| IP:', resolvedIP, '| level:', entry.level);
+
+      // ── If AbuseIPDB just upgraded level to malicious, block immediately ──
+      if (entry.level === 'malicious' && !UNBLOCKED_HOSTS.has(host) && !isTemporarilyAllowed(host)) {
+        // Find the tab still sitting on this host
+        let blockTid = tabId;
+        let blockUrl = origUrl;
+        if (!blockTid) {
+          for (const [id, u] of LAST_URL.entries()) {
+            try { if (new URL(u).hostname === host) { blockTid = id; blockUrl = u; break; } } catch {}
+          }
+        }
+        if (blockTid && blockUrl) {
+          try {
+            await chrome.tabs.get(blockTid);
+            await blockTab(blockTid, blockUrl, entry, 'VirusTotal / AbuseIPDB: malicious');
+          } catch {}
+        }
+        // Add DNR for all future visits
+        addDNRBlock(host, blockUrl || 'https://'+host, entry).catch(() => {});
+        return; // skip notification logic below — we already blocked
+      }
     }
 
     // Resolve tabId if not provided
@@ -307,7 +414,13 @@ async function phase2(host, tabId, origUrl) {
 // ─── Phase 1: VT + AbuseIPDB only ─────────────────────────────
 async function phase1(host) {
   const cached = await cacheGet(host);
-  if (cached) return cached;
+  if (cached) {
+    // Ensure DNR rule is present for malicious cache hits (may have been wiped on reload)
+    if (cached.level === 'malicious' && !UNBLOCKED_HOSTS.has(host)) {
+      addDNRBlock(host, 'https://' + host, cached).catch(() => {});
+    }
+    return cached;
+  }
   const keys = await chrome.storage.sync.get(['vtApiKey', 'abuseApiKey']);
   let vt = null, abuse = null;
   if (keys.vtApiKey || keys.abuseApiKey) {
@@ -332,7 +445,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!url || !shouldAnalyse(url)) return;
   const host = getHost(url);
   if (!host) return;
-  if (ALLOW_ONCE.has(url)) { ALLOW_ONCE.delete(url); return; }
+  if (isTemporarilyAllowed(host) || UNBLOCKED_HOSTS.has(host)) return;
   if (LAST_URL.get(tabId) === url && IN_FLIGHT.has(tabId)) return;
   const prevUrl = LAST_URL.get(tabId);
   if (prevUrl && prevUrl !== url) { try { dismissNotif(new URL(prevUrl).hostname); } catch {} }
@@ -348,13 +461,21 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 async function handleNavigation(tabId, url, host) {
   try { await chrome.tabs.get(tabId); } catch { return; }
 
+  // Skip if user permanently unblocked or has an active 1-hour Proceed Anyway
+  if (UNBLOCKED_HOSTS.has(host) || isTemporarilyAllowed(host)) return;
+
   const entry = await phase1(host);
 
   // ── Real malicious (VT/Abuse confirmed) ──
   if (entry.level === 'malicious' && (entry.vt || entry.abuse)) {
     try { await chrome.tabs.get(tabId); } catch { return; }
     await blockTab(tabId, url, entry, 'VirusTotal / AbuseIPDB: malicious');
-    // Enrich in background for block page details (no tabId — tab is navigating away)
+
+    // Add DNR rule for ALL malicious — instant block on future visits
+    // Super-malicious (VT > 6 AND AbuseIPDB > 60%) → no Proceed Anyway bypass possible
+    addDNRBlock(host, url, entry).catch(() => {});
+
+    // Enrich in background for block page details
     phase2(host, null, null).catch(() => {});
     return;
   }
@@ -380,6 +501,32 @@ chrome.tabs.onRemoved.addListener(tabId => {
   LAST_URL.delete(tabId);
   chrome.action.setBadgeText({ text: '', tabId }).catch(() => {});
 });
+
+// ─── webNavigation: instant block for cached malicious entries ────────────────
+// Fires BEFORE the browser starts loading — eliminates the "page flashes then redirects" problem
+chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+  if (details.frameId !== 0) return; // main frame only
+  const url = details.url;
+  if (!shouldAnalyse(url)) return;
+  const host = getHost(url);
+  if (!host) return;
+  if (UNBLOCKED_HOSTS.has(host) || isTemporarilyAllowed(host)) return;
+
+  const cached = await cacheGet(host);
+  if (!cached) return; // not in cache — tabs.onUpdated will handle via API call
+
+  if (cached.level === 'malicious') {
+    try {
+      await chrome.tabs.get(details.tabId);
+      await blockTab(details.tabId, url, cached, 'VirusTotal / AbuseIPDB: malicious');
+    } catch {}
+  } else if (cached.level === 'blocked' && cached.blockReason) {
+    try {
+      await chrome.tabs.get(details.tabId);
+      await blockTab(details.tabId, url, cached, cached.blockReason);
+    } catch {}
+  }
+});
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   if (msg.type==='ANALYSE_HOST') {
     (async()=>{
@@ -402,7 +549,26 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     respond({ok:true}); return true;
   }
   if (msg.type==='PROCEED_ANYWAY') {
-    if(msg.url) ALLOW_ONCE.add(msg.url);
+    if (msg.url) {
+      const h = getHost(msg.url);
+      if (h) {
+        ALLOWED_HOSTS.set(h, Date.now() + ALLOW_TTL);
+        const tabId = msg.tabId || sender.tab?.id;
+        (async () => {
+          await removeDNRBlock(h);
+          if (tabId) {
+            try { await chrome.tabs.update(tabId, { url: msg.url }); } catch {}
+          }
+          setTimeout(() => {
+            if (!isTemporarilyAllowed(h) && !UNBLOCKED_HOSTS.has(h)) {
+              cacheGet(h).then(e => {
+                if (e && e.level === 'malicious') addDNRBlock(h, msg.url, e).catch(() => {});
+              }).catch(() => {});
+            }
+          }, ALLOW_TTL + 5000);
+        })();
+      }
+    }
     respond({ok:true}); return true;
   }
   if (msg.type==='CLEAR_CACHE') {
@@ -432,6 +598,72 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
         abuseScore:v.abuse?.score??null,ts:v.ts||0,
       })).sort((a,b)=>b.ts-a.ts);
       respond({entries});
+    });
+    return true;
+  }
+  // Delete a single cache entry by target (domain or IP)
+  if (msg.type==='DELETE_CACHE_ENTRY') {
+    const key = CACHE_PFX + (msg.target || '');
+    chrome.storage.local.remove(key, () => respond({ ok: true }));
+    return true;
+  }
+  // Permanently unblock a host (added to persistent allowlist, removes DNR rule)
+  if (msg.type==='UNBLOCK_HOST') {
+    const host = msg.host || '';
+    if (host) {
+      UNBLOCKED_HOSTS.add(host);
+      ALLOWED_HOSTS.set(host, Infinity); // permanent session allow
+      saveUnblocked().catch(() => {});
+      removeDNRBlock(host).catch(() => {});
+    }
+    respond({ ok: true });
+    return true;
+  }
+  // Get unblocked host list (for popup display)
+  if (msg.type==='GET_UNBLOCKED_HOSTS') {
+    respond({ hosts: [...UNBLOCKED_HOSTS] });
+    return true;
+  }
+  // Get temp-allowed hosts (Proceed Anyway, with expiry) for popup lock icon
+  if (msg.type==='GET_TEMP_ALLOWED_HOSTS') {
+    const now = Date.now();
+    const hosts = [];
+    for (const [h, exp] of ALLOWED_HOSTS.entries()) {
+      if (exp === Infinity) continue; // permanent unblocks handled separately
+      if (exp > now) hosts.push(h);
+    }
+    respond({ hosts });
+    return true;
+  }
+  // Re-block a previously unblocked host
+  if (msg.type==='REBLOCK_HOST') {
+    const host = msg.host || '';
+    if (host) {
+      UNBLOCKED_HOSTS.delete(host);
+      ALLOWED_HOSTS.delete(host);
+      saveUnblocked().catch(() => {});
+      // Re-add DNR rule so next visit is blocked instantly
+      cacheGet(host).then(e => {
+        if (e && e.level === 'malicious') addDNRBlock(host, 'https://'+host, e).catch(() => {});
+      }).catch(() => {});
+    }
+    respond({ ok: true });
+    return true;
+  }
+  // Clear stale "no-key" entries when a new API key is saved
+  // keyType: 'vt' → remove entries where vt===null; 'abuse' → where abuse===null
+  if (msg.type==='CLEAR_STALE_CACHE') {
+    chrome.storage.local.get(null, all => {
+      const toRemove = Object.entries(all)
+        .filter(([k, v]) => {
+          if (!k.startsWith(CACHE_PFX)) return false;
+          if (msg.keyType === 'vt')    return v.vt    === null || v.vt    === undefined;
+          if (msg.keyType === 'abuse') return v.abuse === null || v.abuse === undefined;
+          return false;
+        })
+        .map(([k]) => k);
+      if (!toRemove.length) { respond({ cleared: 0 }); return; }
+      chrome.storage.local.remove(toRemove, () => respond({ cleared: toRemove.length }));
     });
     return true;
   }
