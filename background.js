@@ -676,6 +676,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 const EH_EMAIL_DOMAINS = new Set([
   'mail.google.com',
   'outlook.live.com', 'outlook.office.com', 'outlook.office365.com',
+  'outlook.cloud.microsoft',
   'mail.yahoo.com',
   'mail.proton.me', 'protonmail.com'
 ]);
@@ -767,8 +768,11 @@ chrome.runtime.onMessage.addListener(function(msg, sender, respond) {
       // Return all checked hosts with their status
       const allResults = hosts.map(function(host) {
         const f = flagged.find(function(x){ return x.host === host; });
-        return f ? { host: host, clean: false, vtBad: f.vtBad, vtTotal: f.vtTotal, abuseScore: f.abuseScore }
-                 : { host: host, clean: true };
+        if (f) {
+          const lvl = (f.vtBad >= 4 || f.abuseScore >= 55) ? 'malicious' : 'suspicious';
+          return { host: host, clean: false, vtBad: f.vtBad, vtTotal: f.vtTotal, abuseScore: f.abuseScore, level: lvl };
+        }
+        return { host: host, clean: true, level: 'clean' };
       });
       respond({ flagged: flagged, all: allResults });
     })();
