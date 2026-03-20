@@ -96,7 +96,7 @@ chrome.runtime.onInstalled.addListener(() => restoreDNRRules().catch(() => {}));
 async function getSettings() {
   const s = await chrome.storage.sync.get(['notifMode','tgEnabled','countryRules']);
   return {
-    notifMode:    s.notifMode || 'suspicious_only',
+    notifMode:    s.notifMode || 'off',
     tgEnabled:    s.tgEnabled === true,   // must be strictly true
     countryRules: (s.countryRules||[]).map(r => ({
       mode:'suspicious_only', notify:true, block:false, telegram:false, ...r
