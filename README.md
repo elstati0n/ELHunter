@@ -6,14 +6,14 @@
 
 <p align="center">
   <b>Real-time domain & IP threat analysis directly in your browser.</b><br/>
-  VirusTotal · AbuseIPDB · Geo Intelligence · AI Phishing Detection · Telegram Alerts
+  ZeroScan · Geo Intelligence · AI Phishing Detection · Telegram Alerts
 </p>
 
 ---
 
 ## What is ElHunter?
 
-ElHunter is a Chrome extension that silently monitors every website you visit and every email you read — checking URLs, domains and IP addresses against multiple threat intelligence sources in real time. If something malicious is detected, it blocks the page **instantly** using Chrome's `declarativeNetRequest` API and shows a detailed threat report. For emails, it scans embedded links (including hidden button hrefs) and optionally analyzes the full content with AI.
+ElHunter is a Chrome extension that silently monitors every website you visit and every email you read — checking URLs, domains and IP addresses against threat intelligence sources in real time. If something malicious is detected, it blocks the page **instantly** using Chrome's `declarativeNetRequest` API and shows a detailed threat report. For emails, it scans embedded links (including hidden button hrefs) and optionally analyzes the full content with AI.
 
 Designed for security professionals, IT administrators, journalists, and privacy-conscious users who want enterprise-grade threat visibility without enterprise-grade complexity.
 
@@ -23,21 +23,21 @@ Designed for security professionals, IT administrators, journalists, and privacy
 
 ### 🔴 Real-time Site Blocking
 
-Every navigation is checked against VirusTotal and AbuseIPDB. If the domain or IP is flagged as malicious, the tab is immediately redirected to a detailed block page showing:
+Every navigation is checked against ZeroScan. If the domain, IP or URL is flagged as malicious, the tab is immediately redirected to a detailed block page showing:
 
 - Blocked URL
-- VirusTotal vendor count (e.g. `15/94 flagged`)
-- AbuseIPDB confidence score with visual progress bar
+- ZeroScan verdict (`MALICIOUS`, `SUSPICIOUS`, `CLEAN`)
+- ZeroScan category
 - Resolved IP address
 - Country and ISP/Organization
 - Cloudflare detection (CDN vs Direct IP)
-- Reason for block (VT/AbuseIPDB or country rule)
+- Reason for block (ZeroScan or country rule)
 
 #### Two-phase blocking engine
 
-**Phase 1** — VirusTotal + AbuseIPDB are queried immediately on navigation. If malicious, the tab is blocked before the page loads. A `declarativeNetRequest` dynamic rule is also written so that **all future visits to the same host are blocked at the network level** — before any JavaScript runs, with zero page flash.
+**Phase 1** — ZeroScan is queried immediately on navigation. If malicious, the tab is blocked before the page loads. A `declarativeNetRequest` dynamic rule is also written so that **all future visits to the same host are blocked at the network level** — before any JavaScript runs, with zero page flash.
 
-**Phase 2** — Runs in the background after Phase 1. Resolves the domain to an IP via DNS, geolocates it, checks AbuseIPDB on the resolved IP. If Phase 2 upgrades the threat level to malicious, **the currently open tab is blocked immediately** — no refresh needed.
+**Phase 2** — Runs in the background after Phase 1. Resolves the domain to an IP via DNS, geolocates it, enriches Cloudflare / country / ISP data, and can re-check the resolved IP with ZeroScan when needed. If Phase 2 upgrades the threat level to malicious, **the currently open tab is blocked immediately** — no refresh needed.
 
 #### Instant blocking on repeat visits
 
@@ -88,9 +88,9 @@ Links are extracted from two sources simultaneously:
 1. **Plain text regex** — `http://` and `https://` URLs found in the email body text
 2. **DOM href scan** — `href` attributes on all `<a>` elements, including button-style links with redirect URLs (e.g. `https://accounts.google.com/AccountChooser?continue=...`)
 
-All discovered hosts are deduplicated and checked against VirusTotal + AbuseIPDB. Results appear inline at the top of the page:
+All discovered hosts are deduplicated and checked against ZeroScan. Results appear inline at the top of the page:
 - ✓ `github.com` clean
-- ✕ `evil-domain.com` (VT:5/72  Abuse:85%)
+- ✕ `evil-domain.com` (ZeroScan:MALICIOUS Malware)
 
 The result bar auto-dismisses after 7 seconds if all links are clean. If any threat is found, it stays until you close it (✕) or navigate away from the email.
 
@@ -125,20 +125,20 @@ Each rule supports:
 - **TLD ON** — match by domain extension (e.g. `.ru`, `.cn`) — no geo lookup needed
 - **Notify ON/OFF** — Chrome notification on threat
 - **Mode** — Suspicious only / All events
-- **Block ON/OFF** — block all access from this country regardless of VT/AbuseIPDB scores
+- **Block ON/OFF** — block all access from this country regardless of ZeroScan scores
 - **TG ON/OFF** — send Telegram alert for this rule
 
 ---
 
 ### ✈️ Telegram Alerts
 
-Send threat alerts to a Telegram bot. Configure bot token + chat ID in API Keys. Each alert includes: threat level emoji, VT score, AbuseIPDB score, country flag, resolved IP and Cloudflare status.
+Send threat alerts to a Telegram bot. Configure bot token + chat ID in API Keys. Each alert includes: threat level emoji, ZeroScan verdict, category, country flag, resolved IP and Cloudflare status.
 
 ---
 
 ### 💾 14-Day Cache
 
-All scan results are cached in `chrome.storage.local` with a 14-day TTL. The **Cache tab** shows a real-time breakdown (clean / suspicious / malicious / blocked). Click any chip to expand an inline list — the popup grows naturally to fit the content. Each row shows domain, country, VT, AbuseIPDB, Cloudflare status and age. Per-row delete (🗑) and lock toggle (🔒/🔓) are available.
+All scan results are cached in `chrome.storage.local` with a 14-day TTL. The **Cache tab** shows a real-time breakdown (clean / suspicious / malicious / blocked). Click any chip to expand an inline list — the popup grows naturally to fit the content. Each row shows domain, country, ZeroScan verdict, category, Cloudflare status and age. Per-row delete (🗑) and lock toggle (🔒/🔓) are available.
 
 ---
 
@@ -146,19 +146,18 @@ All scan results are cached in `chrome.storage.local` with a 14-day TTL. The **C
 
 | Condition | Level | Action |
 |-----------|-------|--------|
-| VT flagged ≥ 4 vendors | `malicious` | Instant block + DNR rule |
-| AbuseIPDB ≥ 55% | `malicious` | Instant block + DNR rule |
-| VT flagged 1–3 vendors | `suspicious` | Notification |
-| AbuseIPDB 1–54% | `suspicious` | Notification |
-| No flags | `clean` | Silent |
+| ZeroScan verdict = `malicious` | `malicious` | Instant block + DNR rule |
+| ZeroScan verdict = `suspicious` | `suspicious` | Notification |
+| ZeroScan verdict = `clean` | `clean` | Silent |
+| Country rule with Block ON | `blocked` | Immediate block |
 
-> AbuseIPDB is checked on the **resolved IP** for domains (Phase 2). The threshold is 55% — below this, the site is flagged as suspicious but not blocked.
+> When no ZeroScan API key is configured, geo enrichment still works, but threat verdicts remain incomplete until a key is added.
 
 ---
 
 ## Architecture
 
-```
+```text
 Browser Navigation
        │
        ▼
@@ -173,18 +172,17 @@ Browser Navigation
        │
        ├─── tabs.onUpdated (loading) ──────── first-visit flow
        │    │
-       │    ├─── Phase 1 ──────────────────────────────────────────────────┐
-       │    │    VirusTotal API       → malicious/suspicious/harmless count │
-       │    │    AbuseIPDB API        → confidence score (IP only)          │
-       │    │    classify()           → 'clean'|'suspicious'|'malicious'    │
-       │    │    cacheSet(host)       → saved to chrome.storage.local       │
-       │    │    addDNRBlock(host)    → network-level block for future visits│
-       │    │    If malicious → blockTab() immediately                      │
-       │    │                                                                │
-       │    └─── Phase 2 (background) ──────────────────────────────────────┘
+       │    ├─── Phase 1 ────────────────────────────────────────────────┐
+       │    │    ZeroScan API         → verdict + category              │
+       │    │    classify()           → 'clean'|'suspicious'|'malicious'│
+       │    │    cacheSet(host)       → saved to chrome.storage.local   │
+       │    │    addDNRBlock(host)    → network-level block for repeats │
+       │    │    If malicious → blockTab() immediately                  │
+       │    │                                                           │
+       │    └─── Phase 2 (background) ──────────────────────────────────┘
        │         networkcalc.com DNS  → domain → IP
        │         ipinfo.io            → IP → country, ISP, org
-       │         AbuseIPDB (on IP)    → upgrade level if score ≥ 55%
+       │         ZeroScan (if needed) → resolved IP re-check
        │         If upgraded to malicious → blockTab() current tab immediately
        │         isCF(ip)             → Cloudflare CIDR match
        │         notifDecision()      → 'block'|'notify'|'skip'|'wait'
@@ -192,7 +190,7 @@ Browser Navigation
        └─── Email tabs (phishing-content.js injected)
             extractUrls(text)         → regex from email body text
             extractUrlsFromDOM(body)  → href attributes on all <a> elements
-            CHECK_EMAIL_URLS          → VT + AbuseIPDB per unique host
+            CHECK_EMAIL_URLS          → ZeroScan per unique host
             showRegexResult()         → inline bar, auto-hides if clean
             MutationObserver          → removes bars when email is closed
             CHECK_EMAIL_LLM           → email content → AI provider → score
@@ -205,8 +203,7 @@ Browser Navigation
 
 | Service | Purpose | Auth | Free Limit |
 |---------|---------|------|------------|
-| [VirusTotal](https://virustotal.com) | Domain/IP threat scan | API key | 4 req/min, 500/day |
-| [AbuseIPDB](https://abuseipdb.com) | IP abuse confidence | API key | 1,000 req/day |
+| [ZeroScan](https://zeroscan.az) | URL / domain / IP threat scan | API key | Varies |
 | [networkcalc.com](https://networkcalc.com) | DNS A record lookup | None | No public limit |
 | [ipinfo.io](https://ipinfo.io) | IP geo + ISP lookup | None | 1,000 req/day |
 | [api.telegram.org](https://core.telegram.org/bots) | Send alert messages | Bot token | No limit |
@@ -246,8 +243,7 @@ Open the popup → **API Keys** tab:
 
 | Key | Where to get | Required for |
 |-----|-------------|--------------|
-| VirusTotal | [virustotal.com/gui/my-apikey](https://www.virustotal.com/gui/my-apikey) | Domain/IP scanning |
-| AbuseIPDB | [abuseipdb.com/account/api](https://www.abuseipdb.com/account/api) | IP abuse scoring |
+| ZeroScan | [zeroscan.az](https://zeroscan.az) | URL / domain / IP scanning |
 | Telegram Bot Token | [@BotFather](https://t.me/BotFather) | Telegram alerts |
 | Telegram Chat ID | [@userinfobot](https://t.me/userinfobot) | Telegram alerts |
 | AI API Key | Provider dashboard | Email AI analysis |
@@ -258,7 +254,7 @@ Open the popup → **API Keys** tab:
 
 ## File Structure
 
-```
+```text
 ElHunter/
 ├── manifest.json          # MV3 manifest — permissions, host_permissions, icons
 ├── background.js          # Service worker — analysis, cache, DNR rules, blocking
@@ -304,9 +300,9 @@ ElHunter/
 ## Limitations
 
 - Chrome only (Manifest V3). Firefox not supported.
-- VirusTotal free API: 4 requests/minute, 500/day.
+- ZeroScan API limits depend on your plan.
 - ipinfo.io free tier: 1,000 requests/day — covered by 14-day cache.
-- AbuseIPDB checks IP addresses only — domains without a resolved IP show N/A.
+- Threat verdicts require a ZeroScan API key — without it, only geo / IP / Cloudflare enrichment is shown.
 - Email detection works on supported webmail clients only, not desktop apps.
 - Local LLM providers (Ollama, LM Studio) must be running before clicking Analyze.
 
@@ -314,8 +310,7 @@ ElHunter/
 
 ## Acknowledgements
 
-- [VirusTotal](https://virustotal.com) — multi-engine malware scanning
-- [AbuseIPDB](https://abuseipdb.com) — IP reputation database
+- [ZeroScan](https://zeroscan.az) — threat intelligence scanning
 - [networkcalc.com](https://networkcalc.com) — free DNS lookup API
 - [ipinfo.io](https://ipinfo.io) — IP geolocation and ASN data
 - [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk) + [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) — fonts
