@@ -4,10 +4,8 @@
   const p = new URLSearchParams(location.search);
 
   const origUrl     = p.get('url')         || '';
-  const vtM         = parseInt(p.get('vtM')    || '0', 10);
-  const vtS         = parseInt(p.get('vtS')    || '0', 10);
-  const abuseS      = parseInt(p.get('abuseS') || '0', 10);
-  const vtTotal     = parseInt(p.get('vtTotal') || '0', 10);
+  const verdict     = String(p.get('verdict') || '').toLowerCase();
+  const category    = p.get('category')    || '';
   const blockReason = p.get('blockReason') || '';
 
   let country = p.get('country') || '';
@@ -21,33 +19,28 @@
     const badge = document.createElement('div');
     badge.style.cssText = 'background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#ef4444;font-size:11px;border-radius:6px;padding:5px 12px;text-align:center;margin-bottom:4px;font-weight:600;letter-spacing:.03em';
     badge.textContent = '\uD83D\uDEAB ' + blockReason;
-    document.querySelector('.report-card')?.prepend(badge);
+    document.querySelector('.tcard')?.prepend(badge);
   }
 
-  const rVt   = document.getElementById('rVt');
-  const total = vtM + vtS;
-  if (total > 0) {
-    rVt.textContent = total + (vtTotal > 0 ? ' / ' + vtTotal : '') + ' vendors flagged';
-    rVt.classList.add('bad');
+  const verdictLabel = document.querySelector('#rDetections')?.closest('.trow')?.querySelector('.trow-label');
+  if (verdictLabel) verdictLabel.textContent = 'ZeroScan - Verdict';
+
+  const rDetections = document.getElementById('rDetections');
+  if (verdict === 'malicious' || verdict === 'suspicious' || verdict === 'clean') {
+    rDetections.textContent = verdict.toUpperCase();
+    rDetections.classList.add(verdict === 'clean' ? 'ok' : 'bad');
   } else {
-    rVt.textContent = 'Not flagged';
-    rVt.classList.add('ok');
+    rDetections.textContent = 'UNKNOWN';
+    rDetections.classList.add('na');
   }
 
-  const rAbuse    = document.getElementById('rAbuse');
-  const scoreFill = document.getElementById('scoreFill');
-  if (abuseS > 0) {
-    rAbuse.textContent = abuseS + '% confidence';
-    rAbuse.classList.add('bad');
-    const hue = Math.max(0, 120 - abuseS * 1.2);
-    scoreFill.style.width      = Math.min(100, abuseS) + '%';
-    scoreFill.style.background = 'hsl(' + hue + ',90%,55%)';
-    scoreFill.style.boxShadow  = '0 0 6px hsl(' + hue + ',90%,55%)';
+  const rCategory = document.getElementById('rCategory');
+  if (category) {
+    rCategory.textContent = category;
+    rCategory.classList.add('bad');
   } else {
-    rAbuse.textContent = 'N/A (domain)';
-    rAbuse.classList.add('na');
-    document.getElementById('scoreWrap').style.justifyContent = 'flex-end';
-    document.getElementById('scoreFill').parentElement.style.display = 'none';
+    rCategory.textContent = 'N/A';
+    rCategory.classList.add('na');
   }
 
   function applyEnrichment() {
@@ -110,7 +103,6 @@
 
   document.getElementById('btnProceed').addEventListener('click', function () {
     if (!origUrl) return;
-    // Get our own tabId first, then send it with the message
     chrome.tabs.getCurrent(function(tab) {
       chrome.runtime.sendMessage({ type: 'PROCEED_ANYWAY', url: origUrl, tabId: tab && tab.id });
     });

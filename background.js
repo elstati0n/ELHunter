@@ -2,6 +2,7 @@
 
 const CACHE_TTL = 14 * 24 * 60 * 60 * 1000;
 const CACHE_PFX = 'eh_';
+const URL_CACHE_PFX = 'ehurl_';
 const SKIP      = new Set(['localhost','127.0.0.1','::1','0.0.0.0']);
 const IN_FLIGHT      = new Map();
 const LAST_URL       = new Map();
@@ -29,6 +30,54 @@ async function loadUnblocked() {
   } catch {}
 }
 
+function normalizeVerdict(verdict) {
+  const v = String(verdict || '').trim().toLowerCase();
+  return v === 'clean' || v === 'suspicious' || v === 'malicious' ? v : 'unknown';
+}
+function getEntryVerdict(entry) {
+  const verdict = normalizeVerdict(entry?.zs?.verdict);
+  if (verdict !== 'unknown') return verdict;
+  if (entry?.level === 'blocked') return 'blocked';
+  return normalizeVerdict(entry?.level);
+}
+function levelRank(level) {
+  return level === 'blocked' ? 4
+    : level === 'malicious' ? 3
+    : level === 'suspicious' ? 2
+    : level === 'clean' ? 1
+    : 0;
+}
+function shouldScanExactUrl(url) {
+  try {
+    const u = new URL(url);
+    return ['http:','https:'].includes(u.protocol) && ((u.pathname || '/') !== '/' || !!u.search);
+  } catch {
+    return false;
+  }
+}
+function mergeThreatEntries(baseEntry, overrideEntry) {
+  if (!baseEntry) return overrideEntry;
+  if (!overrideEntry) return baseEntry;
+  const useOverride =
+    levelRank(overrideEntry.level) > levelRank(baseEntry.level) ||
+    (levelRank(overrideEntry.level) === levelRank(baseEntry.level) &&
+      !!overrideEntry.zs?.category &&
+      !baseEntry.zs?.category);
+  if (!useOverride) return baseEntry;
+  return {
+    ...baseEntry,
+    ...overrideEntry,
+    zs: overrideEntry.zs || baseEntry.zs || null,
+    blockReason: overrideEntry.blockReason || baseEntry.blockReason || '',
+    cloudflare: baseEntry.cloudflare ?? overrideEntry.cloudflare ?? null,
+    resolvedIP: baseEntry.resolvedIP || overrideEntry.resolvedIP || '',
+    country: baseEntry.country || overrideEntry.country || '',
+    countryCode: baseEntry.countryCode || overrideEntry.countryCode || '',
+    isp: baseEntry.isp || overrideEntry.isp || '',
+    enriched: baseEntry.enriched || overrideEntry.enriched || false
+  };
+}
+
 // ─── declarativeNetRequest helpers ────────────────────────────────────────────
 function hostToRuleId(host) {
   let h = 5381;
@@ -39,11 +88,13 @@ async function addDNRBlock(host, origUrl, entry) {
   try {
     const p = new URLSearchParams({
       url: origUrl || 'https://'+host,
-      vtM: entry.vt?.malicious ?? 0, vtS: entry.vt?.suspicious ?? 0, vtTotal: entry.vt?.total ?? 0,
-      abuseS: entry.abuse?.score ?? 0, country: entry.country || '',
-      isp: entry.isp || entry.abuse?.isp || '', ip: entry.resolvedIP || '',
-      cf: entry.cloudflare===true?'1':entry.cloudflare===false?'0':'',
-      blockReason: 'VirusTotal / AbuseIPDB: malicious'
+      verdict:      getEntryVerdict(entry),
+      category:     entry.zs?.category       || '',
+      country:      entry.country            || entry.zs?.country_code || '',
+      isp:          entry.isp                || entry.zs?.isp          || '',
+      ip:           entry.resolvedIP         || '',
+      cf:           entry.cloudflare===true?'1':entry.cloudflare===false?'0':'',
+      blockReason:  'ZeroScan: malicious'
     });
     const rId = hostToRuleId(host);
     await chrome.declarativeNetRequest.updateDynamicRules({
@@ -178,12 +229,36 @@ function isIP(h){return/^(\d{1,3}\.){3}\d{1,3}$/.test(h);}
 async function fetchT(url,opts,ms){return fetch(url,{...opts,signal:AbortSignal.timeout(ms)});}
 
 // ─── Cache ────────────────────────────────────────────────────
-async function cacheGet(host){try{const r=await chrome.storage.local.get(CACHE_PFX+host);const e=r[CACHE_PFX+host];if(!e)return null;if(Date.now()-e.ts>CACHE_TTL){chrome.storage.local.remove(CACHE_PFX+host);return null;}return e;}catch{return null;}}
-async function cacheSet(host,data){await chrome.storage.local.set({[CACHE_PFX+host]:{...data,ts:Date.now()}});}
+async function readCacheEntry(key){try{const r=await chrome.storage.local.get(key);const e=r[key];if(!e)return null;if(Date.now()-e.ts>CACHE_TTL){chrome.storage.local.remove(key);return null;}return e;}catch{return null;}}
+async function writeCacheEntry(key,data){await chrome.storage.local.set({[key]:{...data,ts:Date.now()}});}
+async function cacheGet(host){return readCacheEntry(CACHE_PFX+host);}
+async function cacheSet(host,data){return writeCacheEntry(CACHE_PFX+host,data);}
+async function urlCacheGet(url){return readCacheEntry(URL_CACHE_PFX+url);}
+async function urlCacheSet(url,data){return writeCacheEntry(URL_CACHE_PFX+url,data);}
 
 // ─── API calls ────────────────────────────────────────────────
-async function checkVT(host,key){const url='https://www.virustotal.com/api/v3/'+(isIP(host)?'ip_addresses/':'domains/')+host;try{const r=await fetchT(url,{headers:{'x-apikey':key}},8000);if(!r.ok)return null;const j=await r.json();const s=j?.data?.attributes?.last_analysis_stats;if(!s)return null;return{malicious:s.malicious||0,suspicious:s.suspicious||0,harmless:s.harmless||0,undetected:s.undetected||0,total:(s.malicious||0)+(s.suspicious||0)+(s.harmless||0)+(s.undetected||0)};}catch{return null;}}
-async function checkAbuse(ip,key){if(!isIP(ip))return null;try{const r=await fetchT('https://api.abuseipdb.com/api/v2/check?ipAddress='+ip+'&maxAgeInDays=90',{headers:{Key:key,Accept:'application/json'}},8000);if(!r.ok)return null;const j=await r.json();return{score:j?.data?.abuseConfidenceScore||0,reports:j?.data?.totalReports||0,countryCode:j?.data?.countryCode||'',isp:j?.data?.isp||''};}catch{return null;}}
+async function checkZeroScan(target, key) {
+  try {
+    const r = await fetchT(
+      'https://zeroscan.az/api/lookup?q=' + encodeURIComponent(target),
+      { headers: { 'X-API-Key': key } },
+      10000
+    );
+    if (!r.ok) return null;
+    const j = await r.json();
+    // Normalize to internal format
+    return {
+      verdict:      normalizeVerdict(j.verdict),
+      is_malicious: j.is_malicious === true,
+      category:     j.category     || '',
+      detections:   j.detections   || 0,
+      total_vendors:j.total_vendors|| 0,
+      country_code: j.country_code || '',
+      isp:          j.isp          || '',
+      is_tor:       j.is_tor       === true,
+    };
+  } catch { return null; }
+}
 const CC_NAMES={"AF":"Afghanistan","AL":"Albania","DZ":"Algeria","AR":"Argentina","AM":"Armenia","AU":"Australia","AT":"Austria","AZ":"Azerbaijan","BH":"Bahrain","BD":"Bangladesh","BY":"Belarus","BE":"Belgium","BO":"Bolivia","BA":"Bosnia","BR":"Brazil","BG":"Bulgaria","KH":"Cambodia","CA":"Canada","CL":"Chile","CN":"China","CO":"Colombia","HR":"Croatia","CU":"Cuba","CY":"Cyprus","CZ":"Czech Republic","DK":"Denmark","EG":"Egypt","EE":"Estonia","FI":"Finland","FR":"France","GE":"Georgia","DE":"Germany","GH":"Ghana","GR":"Greece","HU":"Hungary","IN":"India","ID":"Indonesia","IR":"Iran","IQ":"Iraq","IE":"Ireland","IL":"Israel","IT":"Italy","JP":"Japan","JO":"Jordan","KZ":"Kazakhstan","KE":"Kenya","KW":"Kuwait","LV":"Latvia","LB":"Lebanon","LY":"Libya","LT":"Lithuania","MY":"Malaysia","MX":"Mexico","MD":"Moldova","MA":"Morocco","MM":"Myanmar","NL":"Netherlands","NZ":"New Zealand","NG":"Nigeria","NO":"Norway","PK":"Pakistan","PE":"Peru","PH":"Philippines","PL":"Poland","PT":"Portugal","QA":"Qatar","RO":"Romania","RU":"Russia","SA":"Saudi Arabia","RS":"Serbia","SG":"Singapore","SK":"Slovakia","ZA":"South Africa","KR":"South Korea","ES":"Spain","SE":"Sweden","CH":"Switzerland","SY":"Syria","TW":"Taiwan","TH":"Thailand","TR":"Turkey","UA":"Ukraine","AE":"UAE","GB":"United Kingdom","US":"United States","UZ":"Uzbekistan","VN":"Vietnam"};
 async function geoLookup(host){
   try{
@@ -215,13 +290,12 @@ async function geoLookup(host){
     };
   }catch(e){ return null; }
 }
-// VT flagged (malicious+suspicious): >=4 → malicious, 3 → suspicious, 1-2 → suspicious
-// AbuseIPDB score: >=40 → malicious, >0 → suspicious
-function classify(vt, abuse) {
-  const vtBad = vt    ? (vt.malicious + vt.suspicious) : 0;
-  const score  = abuse ? abuse.score : 0;
-  if (vtBad >= 4 || score >= 55) return 'malicious';
-  if (vtBad >= 1 || score > 0)   return 'suspicious';
+// ZeroScan verdict: malicious → malicious, suspicious → suspicious, clean → clean
+function classify(zs) {
+  if (!zs) return 'clean';
+  const verdict = normalizeVerdict(zs.verdict);
+  if (zs.is_malicious || verdict === 'malicious') return 'malicious';
+  if (verdict === 'suspicious') return 'suspicious';
   return 'clean';
 }
 
@@ -232,7 +306,7 @@ async function setBadge(tabId,level){const map={malicious:{text:'!!!',color:'#e5
 function sendChromeNotif(id, title, message){chrome.notifications.create(id,{type:'basic',iconUrl:chrome.runtime.getURL('icons/icon128.png'),title,message,priority:0},()=>{if(chrome.runtime.lastError){}});}
 
 // ─── Telegram ─────────────────────────────────────────────────
-async function sendTelegram(host, entry) {
+async function sendTelegramLegacy(host, entry) {
   try {
     const keys = await chrome.storage.sync.get(['tgBotToken','tgChatId','tgEnabled']);
     if (!keys.tgBotToken || !keys.tgChatId) {
@@ -244,15 +318,15 @@ async function sendTelegram(host, entry) {
       return;
     }
     const emo = {malicious:'🔴',suspicious:'🟡',clean:'🟢',unknown:'⚪'};
-    const vtBad = entry.vt ? (entry.vt.malicious+entry.vt.suspicious) : null;
+    const detections = entry.zs ? entry.zs.detections : null;
     const flag = entry.countryCode && entry.countryCode.length===2
       ? entry.countryCode.toUpperCase().split('').map(c=>String.fromCodePoint(0x1F1E6-65+c.charCodeAt(0))).join('')
       : '';
     const lines = [
       (emo[entry.level]||'⚪')+' <b>ElHunter — '+(entry.level||'unknown').toUpperCase()+'</b>',
       '🌐 <code>'+host+'</code>',
-      vtBad!==null ? '🔬 VT: <b>'+vtBad+'/'+(entry.vt.total||0)+'</b> flagged' : '🔬 VT: no key',
-      entry.abuse ? '🚨 Abuse: <b>'+entry.abuse.score+'%</b> confidence' : '',
+      detections!==null ? '🔬 ZeroScan: <b>'+detections+'/'+(entry.zs.total_vendors||0)+'</b> detections' : '🔬 ZeroScan: no key',
+      entry.zs?.category ? '🏷 Category: <b>'+entry.zs.category+'</b>' : '',
       entry.country ? flag+' '+entry.country : '',
       entry.resolvedIP ? '🖥 <code>'+entry.resolvedIP+'</code>' : '',
       entry.cloudflare===true ? '☁️ Cloudflare' : entry.cloudflare===false ? '🖥 Direct IP' : '',
@@ -272,17 +346,17 @@ async function sendTelegram(host, entry) {
 }
 
 // ─── Fire notification (Chrome + Telegram) ────────────────────
-function fireNotif(host, tabId, entry, settings) {
+function fireNotifLegacy(host, tabId, entry, settings) {
   if (NOTIF_SENT.has(host)) chrome.notifications.clear(NOTIF_SENT.get(host));
   const id = 'eh_'+Date.now()+'_'+Math.random().toString(36).slice(2);
   NOTIF_SENT.set(host, id);
   setBadge(tabId, entry.level==='malicious'?'malicious':'suspicious');
 
-  const vtBad = entry.vt ? (entry.vt.malicious+entry.vt.suspicious) : null;
+  const detections = entry.zs ? entry.zs.detections : null;
   const text = [
     '🌐 '+host,
-    vtBad!==null ? '🔬 VT: '+vtBad+'/'+(entry.vt.total||0)+' flagged' : '🔬 VT: No key',
-    entry.abuse ? '🚨 Abuse: '+entry.abuse.score+'% confidence' : '',
+    detections!==null ? '🔬 ZeroScan: '+detections+'/'+(entry.zs.total_vendors||0)+' detections' : '🔬 ZeroScan: No key',
+    entry.zs?.category ? '🏷 '+entry.zs.category : '',
     entry.country ? '🌍 '+entry.country : '',
     entry.resolvedIP ? '🖥 '+entry.resolvedIP : '',
     entry.cloudflare===true ? '☁ Cloudflare' : entry.cloudflare===false ? '🖥 Direct IP' : '',
@@ -304,12 +378,21 @@ function dismissNotif(host) {
 
 // ─── Block tab ────────────────────────────────────────────────
 async function blockTab(tabId, origUrl, entry, blockReason) {
-  const p = new URLSearchParams({url:origUrl, vtM:entry.vt?.malicious??0, vtS:entry.vt?.suspicious??0, vtTotal:entry.vt?.total??0, abuseS:entry.abuse?.score??0, country:entry.country||'', isp:entry.isp||entry.abuse?.isp||'', ip:entry.resolvedIP||'', cf:entry.cloudflare===true?'1':entry.cloudflare===false?'0':'', blockReason:blockReason||''});
+  const p = new URLSearchParams({
+    url:          origUrl,
+    verdict:      getEntryVerdict(entry),
+    category:     entry.zs?.category       || '',
+    country:      entry.country            || entry.zs?.country_code || '',
+    isp:          entry.isp                || entry.zs?.isp          || '',
+    ip:           entry.resolvedIP         || '',
+    cf:           entry.cloudflare===true?'1':entry.cloudflare===false?'0':'',
+    blockReason:  blockReason||''
+  });
   try { await chrome.tabs.update(tabId, {url:chrome.runtime.getURL('blocked.html')+'?'+p}); } catch {}
 }
 
 // ─── Phase 2: geo enrichment + single notification decision ───
-async function phase2(host, tabId, origUrl) {
+async function phase2(host, tabId, origUrl, threatOverride = null) {
   if (PHASE2_RUNNING.has(host)) return;
   PHASE2_RUNNING.add(host);
   try {
@@ -325,14 +408,14 @@ async function phase2(host, tabId, origUrl) {
       const countryCode = geo?.countryCode || '';
       const isp         = geo?.isp || '';
 
-      // For domains: also check AbuseIPDB on resolved IP if we have key
+      // For IPs: also re-check resolved IP with ZeroScan if not yet checked
       if (resolvedIP && !isIP(host)) {
-        const keys = await chrome.storage.sync.get(['abuseApiKey']);
-        if (keys.abuseApiKey && !entry.abuse) {
-          const ar = await checkAbuse(resolvedIP, keys.abuseApiKey);
-          if (ar) {
-            entry.abuse = ar;
-            entry.level = classify(entry.vt, ar);
+        const keys = await chrome.storage.sync.get(['zeroscanApiKey']);
+        if (keys.zeroscanApiKey && !entry.zs) {
+          const zr = await checkZeroScan(resolvedIP, keys.zeroscanApiKey);
+          if (zr) {
+            entry.zs    = zr;
+            entry.level = classify(zr);
           }
         }
       }
@@ -346,7 +429,7 @@ async function phase2(host, tabId, origUrl) {
       await cacheSet(host, entry);
       console.log('[EH P2]', host, '| CC:', entry.countryCode, '| IP:', resolvedIP, '| level:', entry.level);
 
-      // ── If AbuseIPDB just upgraded level to malicious, block immediately ──
+      // ── If ZeroScan just upgraded level to malicious, block immediately ──
       if (entry.level === 'malicious' && !UNBLOCKED_HOSTS.has(host) && !isTemporarilyAllowed(host)) {
         // Find the tab still sitting on this host
         let blockTid = tabId;
@@ -359,7 +442,7 @@ async function phase2(host, tabId, origUrl) {
         if (blockTid && blockUrl) {
           try {
             await chrome.tabs.get(blockTid);
-            await blockTab(blockTid, blockUrl, entry, 'VirusTotal / AbuseIPDB: malicious');
+            await blockTab(blockTid, blockUrl, entry, 'ZeroScan: malicious');
           } catch {}
         }
         // Add DNR for all future visits
@@ -411,28 +494,22 @@ async function phase2(host, tabId, origUrl) {
   }
 }
 
-// ─── Phase 1: VT + AbuseIPDB only ─────────────────────────────
+// ─── Phase 1: ZeroScan only ────────────────────────────────────
 async function phase1(host) {
   const cached = await cacheGet(host);
   if (cached) {
-    // Ensure DNR rule is present for malicious cache hits (may have been wiped on reload)
     if (cached.level === 'malicious' && !UNBLOCKED_HOSTS.has(host)) {
       addDNRBlock(host, 'https://' + host, cached).catch(() => {});
     }
     return cached;
   }
-  const keys = await chrome.storage.sync.get(['vtApiKey', 'abuseApiKey']);
-  let vt = null, abuse = null;
-  if (keys.vtApiKey || keys.abuseApiKey) {
-    const [vtR, abR] = await Promise.allSettled([
-      keys.vtApiKey    ? checkVT(host, keys.vtApiKey)       : Promise.resolve(null),
-      keys.abuseApiKey ? checkAbuse(host, keys.abuseApiKey) : Promise.resolve(null),
-    ]);
-    vt    = vtR.status === 'fulfilled' ? vtR.value : null;
-    abuse = abR.status === 'fulfilled' ? abR.value : null;
+  const keys = await chrome.storage.sync.get(['zeroscanApiKey']);
+  let zs = null;
+  if (keys.zeroscanApiKey) {
+    zs = await checkZeroScan(host, keys.zeroscanApiKey);
   }
-  const level = classify(vt, abuse);
-  const entry = { level, vt, abuse, cloudflare: null, resolvedIP: '', country: '', countryCode: '', isp: '', enriched: false };
+  const level = classify(zs);
+  const entry = { level, zs, cloudflare: null, resolvedIP: '', country: '', countryCode: '', isp: '', enriched: false };
   await cacheSet(host, entry);
   console.log('[EH P1]', host, 'level='+level);
   return entry;
@@ -458,38 +535,101 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   IN_FLIGHT.set(tabId, promise);
 });
 
+async function sendTelegram(host, entry) {
+  try {
+    const keys = await chrome.storage.sync.get(['tgBotToken','tgChatId','tgEnabled']);
+    if (!keys.tgBotToken || !keys.tgChatId) {
+      console.warn('[EH TG] missing token or chatId');
+      return;
+    }
+    if (keys.tgEnabled !== true) {
+      console.log('[EH TG] disabled');
+      return;
+    }
+    const levelLabel = (entry.level || 'unknown').toUpperCase();
+    const verdict = getEntryVerdict(entry).toUpperCase();
+    const flag = entry.countryCode && entry.countryCode.length === 2
+      ? entry.countryCode.toUpperCase().split('').map(c => String.fromCodePoint(0x1F1E6 - 65 + c.charCodeAt(0))).join('')
+      : '';
+    const lines = [
+      'ElHunter - ' + levelLabel,
+      'URL: ' + host,
+      entry.zs ? 'ZeroScan: ' + verdict : 'ZeroScan: no key',
+      entry.zs?.category ? 'Category: ' + entry.zs.category : '',
+      entry.country ? (flag ? flag + ' ' : '') + entry.country : '',
+      entry.resolvedIP ? 'IP: ' + entry.resolvedIP : '',
+      entry.cloudflare === true ? 'Cloudflare' : entry.cloudflare === false ? 'Direct IP' : '',
+    ].filter(Boolean).join('\n');
+    const url = 'https://api.telegram.org/bot' + keys.tgBotToken + '/sendMessage';
+    const r = await fetchT(url, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chat_id: String(keys.tgChatId), text:lines})
+    }, 8000);
+    if (!r.ok) {
+      const err = await r.text();
+      console.warn('[EH TG] API error:', r.status, err);
+    } else {
+      console.log('[EH TG] sent OK for', host);
+    }
+  } catch(e){ console.warn('[EH TG] exception:', e.message); }
+}
+
+function fireNotif(host, tabId, entry, settings) {
+  if (NOTIF_SENT.has(host)) chrome.notifications.clear(NOTIF_SENT.get(host));
+  const id = 'eh_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  NOTIF_SENT.set(host, id);
+  setBadge(tabId, entry.level === 'malicious' ? 'malicious' : 'suspicious');
+
+  const verdict = getEntryVerdict(entry).toUpperCase();
+  const text = [
+    'URL: ' + host,
+    entry.zs ? 'ZeroScan: ' + verdict : 'ZeroScan: No key',
+    entry.zs?.category ? 'Category: ' + entry.zs.category : '',
+    entry.country ? 'Country: ' + entry.country : '',
+    entry.resolvedIP ? 'IP: ' + entry.resolvedIP : '',
+    entry.cloudflare === true ? 'Cloudflare' : entry.cloudflare === false ? 'Direct IP' : '',
+  ].filter(Boolean).join('\n');
+
+  const labels = {malicious:'MALICIOUS',suspicious:'SUSPICIOUS',clean:'CLEAN',unknown:'UNKNOWN'};
+  sendChromeNotif(id, labels[entry.level] || 'ElHunter Alert', text);
+
+  const cc = entry.countryCode || '';
+  const doTg = settings ? tgDecision(cc, host || '', settings) : false;
+  if (doTg) sendTelegram(host, entry);
+}
+
 async function handleNavigation(tabId, url, host) {
   try { await chrome.tabs.get(tabId); } catch { return; }
 
   // Skip if user permanently unblocked or has an active 1-hour Proceed Anyway
   if (UNBLOCKED_HOSTS.has(host) || isTemporarilyAllowed(host)) return;
 
-  const entry = await phase1(host);
+  const { hostEntry, urlEntry, entry } = await analyseTarget(host, url);
 
   // ── Real malicious (VT/Abuse confirmed) ──
-  if (entry.level === 'malicious' && (entry.vt || entry.abuse)) {
+  if (entry.level === 'malicious') {
     try { await chrome.tabs.get(tabId); } catch { return; }
-    await blockTab(tabId, url, entry, 'VirusTotal / AbuseIPDB: malicious');
+    await blockTab(tabId, url, entry, 'ZeroScan: malicious');
 
-    // Add DNR rule for ALL malicious — instant block on future visits
-    // Super-malicious (VT > 6 AND AbuseIPDB > 60%) → no Proceed Anyway bypass possible
-    addDNRBlock(host, url, entry).catch(() => {});
+    // ZeroScan confirmed malicious → add DNR for instant block on future visits
+    if (hostEntry.level === 'malicious') addDNRBlock(host, url, hostEntry).catch(() => {});
 
     // Enrich in background for block page details
-    phase2(host, null, null).catch(() => {});
+    phase2Site(host, null, null, urlEntry).catch(() => {});
     return;
   }
 
   // ── Cached 'blocked' entry (country/domain rule previously applied) ──
-  if (entry.level === 'blocked' && entry.blockReason) {
+  if (hostEntry.level === 'blocked' && hostEntry.blockReason) {
     try { await chrome.tabs.get(tabId); } catch { return; }
-    await blockTab(tabId, url, entry, entry.blockReason);
+    await blockTab(tabId, url, hostEntry, hostEntry.blockReason);
     return;
   }
 
   // ── All other decisions (notify / skip / block-by-country) → phase2 ──
   // phase2 fires ONE notification with complete geo data
-  phase2(host, tabId, url).catch(() => {});
+  phase2Site(host, tabId, url, urlEntry).catch(() => {});
 }
 
 async function safeBlockTab(tabId, url, entry, reason) {
@@ -518,7 +658,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   if (cached.level === 'malicious') {
     try {
       await chrome.tabs.get(details.tabId);
-      await blockTab(details.tabId, url, cached, 'VirusTotal / AbuseIPDB: malicious');
+      await blockTab(details.tabId, url, cached, 'ZeroScan: malicious');
     } catch {}
   } else if (cached.level === 'blocked' && cached.blockReason) {
     try {
@@ -527,13 +667,158 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     } catch {}
   }
 });
+
+async function phase1Url(url) {
+  if (!shouldAnalyse(url) || !shouldScanExactUrl(url)) return null;
+  const cached = await urlCacheGet(url);
+  if (cached) return cached;
+  const keys = await chrome.storage.sync.get(['zeroscanApiKey']);
+  if (!keys.zeroscanApiKey) return null;
+  const zs = await checkZeroScan(url, keys.zeroscanApiKey);
+  if (!zs) return null;
+  const entry = {
+    level: classify(zs),
+    zs,
+    cloudflare: null,
+    resolvedIP: '',
+    country: '',
+    countryCode: '',
+    isp: '',
+    enriched: false
+  };
+  await urlCacheSet(url, entry);
+  console.log('[EH P1 URL]', url, 'level=' + entry.level);
+  return entry;
+}
+
+async function analyseTarget(host, url) {
+  let hostEntry = await cacheGet(host);
+  if (!hostEntry) hostEntry = await phase1(host);
+  const urlEntry = url ? await phase1Url(url) : null;
+  return {
+    hostEntry,
+    urlEntry,
+    entry: mergeThreatEntries(hostEntry, urlEntry) || hostEntry
+  };
+}
+
+async function phase2Site(host, tabId, origUrl, threatOverride = null) {
+  if (PHASE2_RUNNING.has(host)) return;
+  PHASE2_RUNNING.add(host);
+  try {
+    let entry = await cacheGet(host);
+    if (!entry) return;
+
+    if (!entry.enriched) {
+      const geo = await geoLookup(host);
+      const resolvedIP = geo?.ip || '';
+      const cloudflare = resolvedIP ? isCF(resolvedIP) : null;
+      const country = geo?.country || '';
+      const countryCode = geo?.countryCode || '';
+      const isp = geo?.isp || '';
+
+      if (resolvedIP && !isIP(host)) {
+        const keys = await chrome.storage.sync.get(['zeroscanApiKey']);
+        if (keys.zeroscanApiKey && !entry.zs) {
+          const zr = await checkZeroScan(resolvedIP, keys.zeroscanApiKey);
+          if (zr) {
+            entry.zs = zr;
+            entry.level = classify(zr);
+          }
+        }
+      }
+
+      entry.cloudflare = cloudflare;
+      entry.resolvedIP = resolvedIP;
+      entry.country = country || entry.country;
+      entry.countryCode = countryCode || entry.countryCode;
+      entry.isp = isp || entry.isp;
+      entry.enriched = true;
+      await cacheSet(host, entry);
+      console.log('[EH P2]', host, '| CC:', entry.countryCode, '| IP:', resolvedIP, '| level:', entry.level);
+    }
+
+    const effectiveEntry = mergeThreatEntries(entry, threatOverride);
+    if (effectiveEntry.level === 'malicious' && !UNBLOCKED_HOSTS.has(host) && !isTemporarilyAllowed(host)) {
+      let blockTid = tabId;
+      let blockUrl = origUrl;
+      if (!blockTid) {
+        for (const [id, currentUrl] of LAST_URL.entries()) {
+          try { if (new URL(currentUrl).hostname === host) { blockTid = id; blockUrl = currentUrl; break; } } catch {}
+        }
+      }
+      if (blockTid && blockUrl) {
+        try {
+          await chrome.tabs.get(blockTid);
+          await blockTab(blockTid, blockUrl, effectiveEntry, 'ZeroScan: malicious');
+        } catch {}
+      }
+      if (entry.level === 'malicious') {
+        addDNRBlock(host, blockUrl || 'https://' + host, entry).catch(() => {});
+      }
+      return;
+    }
+
+    let tid = tabId;
+    if (!tid) {
+      for (const [id, currentUrl] of LAST_URL.entries()) {
+        try { if (new URL(currentUrl).hostname === host) { tid = id; break; } } catch {}
+      }
+    }
+
+    const settings = await getSettings();
+    const decision = notifDecision(effectiveEntry.level, effectiveEntry.countryCode, host, settings);
+    console.log('[EH P2 decision]', decision, host, 'cc=' + effectiveEntry.countryCode, 'level=' + effectiveEntry.level);
+
+    if (decision === 'block') {
+      const matchedRule = findMatchingRule(effectiveEntry.countryCode, host, settings);
+      const isDomain = matchedRule?.domainBased;
+      const blockedEntry = {
+        ...entry,
+        blockReason: isDomain
+          ? 'domain:' + ccToTld(matchedRule.cc)
+          : 'country:' + effectiveEntry.countryCode,
+        level: 'blocked'
+      };
+      await cacheSet(host, blockedEntry);
+      const displayEntry = mergeThreatEntries(blockedEntry, threatOverride);
+      const reason = isDomain
+        ? 'Blocked: domain rule (.' + ccToTld(matchedRule.cc) + ')'
+        : 'Blocked: country rule (' + (effectiveEntry.country || effectiveEntry.countryCode) + ')';
+      if (tid && origUrl) {
+        try { await chrome.tabs.get(tid); await blockTab(tid, origUrl, displayEntry, reason); } catch {}
+      }
+      return;
+    }
+    if (decision === 'notify') {
+      fireNotif(host, tid, effectiveEntry, settings);
+      return;
+    }
+    dismissNotif(host);
+  } catch (e) {
+    console.error('[EH P2 err]', host, e.message);
+    try {
+      const c = await cacheGet(host);
+      if (c && !c.enriched) {
+        c.enriched = true;
+        await cacheSet(host, c);
+      }
+    } catch {}
+  } finally {
+    PHASE2_RUNNING.delete(host);
+  }
+}
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-  if (msg.type==='ANALYSE_HOST') {
+  if (msg.type==='ANALYSE_HOST' || msg.type==='ANALYSE_SITE') {
     (async()=>{
-      let e=await cacheGet(msg.host);
-      if(!e) e=await phase1(msg.host);
-      respond(e||{level:'unknown',vt:null,abuse:null,cloudflare:null,resolvedIP:'',country:'',countryCode:'',isp:'',enriched:false});
-      if(e&&!e.enriched) phase2(msg.host,null,null).catch(()=>{});
+      const host = msg.host || getHost(msg.url || '');
+      if (!host) {
+        respond({level:'unknown',zs:null,cloudflare:null,resolvedIP:'',country:'',countryCode:'',isp:'',enriched:false});
+        return;
+      }
+      const { hostEntry, urlEntry, entry } = await analyseTarget(host, msg.url || '');
+      respond(entry||{level:'unknown',zs:null,cloudflare:null,resolvedIP:'',country:'',countryCode:'',isp:'',enriched:false});
+      if(hostEntry && !hostEntry.enriched) phase2Site(host,null,null,urlEntry).catch(()=>{});
     })();
     return true;
   }
@@ -573,7 +858,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   }
   if (msg.type==='CLEAR_CACHE') {
     chrome.storage.local.get(null).then(all=>{
-      const keys=Object.keys(all).filter(k=>k.startsWith(CACHE_PFX));
+      const keys=Object.keys(all).filter(k=>k.startsWith(CACHE_PFX) || k.startsWith(URL_CACHE_PFX));
       chrome.storage.local.remove(keys).then(()=>respond({ok:true,count:keys.length}));
     });
     return true;
@@ -594,8 +879,9 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
       const entries=Object.entries(all).filter(([k])=>k.startsWith(CACHE_PFX)).map(([k,v])=>({
         target:k.slice(CACHE_PFX.length),level:v.level||'unknown',country:v.country||'',countryCode:v.countryCode||'',
         cloudflare:v.cloudflare??null,resolvedIP:v.resolvedIP||'',isp:v.isp||'',
-        vtFlagged:(v.vt?.malicious||0)+(v.vt?.suspicious||0),vtTotal:v.vt?.total||0,
-        abuseScore:v.abuse?.score??null,ts:v.ts||0,
+        verdict:getEntryVerdict(v),
+        category:v.zs?.category||'',
+        ts:v.ts||0,
       })).sort((a,b)=>b.ts-a.ts);
       respond({entries});
     });
@@ -650,15 +936,12 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     respond({ ok: true });
     return true;
   }
-  // Clear stale "no-key" entries when a new API key is saved
-  // keyType: 'vt' → remove entries where vt===null; 'abuse' → where abuse===null
   if (msg.type==='CLEAR_STALE_CACHE') {
     chrome.storage.local.get(null, all => {
       const toRemove = Object.entries(all)
         .filter(([k, v]) => {
           if (!k.startsWith(CACHE_PFX)) return false;
-          if (msg.keyType === 'vt')    return v.vt    === null || v.vt    === undefined;
-          if (msg.keyType === 'abuse') return v.abuse === null || v.abuse === undefined;
+          if (msg.keyType === 'zeroscan') return v.zs === null || v.zs === undefined;
           return false;
         })
         .map(([k]) => k);
@@ -718,36 +1001,32 @@ chrome.runtime.onMessage.addListener(function(msg, sender, respond) {
   // Check a list of hosts extracted from email body
   if (msg.type === 'CHECK_EMAIL_URLS') {
     (async function() {
-      const keys    = await chrome.storage.sync.get(['vtApiKey', 'abuseApiKey']);
+      const keys    = await chrome.storage.sync.get(['zeroscanApiKey']);
       const flagged = [];
       const hosts   = (msg.hosts || []).slice(0, 8); // cap at 8 per email to limit API cost
-      // Validate each host looks like a real hostname before querying APIs
       const SAFE_HOST_RE = /^[a-zA-Z0-9._-]{1,253}$/;
 
       for (const host of hosts) {
-        if (!SAFE_HOST_RE.test(host)) continue; // skip malformed hosts
+        if (!SAFE_HOST_RE.test(host)) continue;
         if (SKIP.has(host)) continue;
         try {
           let cached = await cacheGet(host);
           if (!cached) {
-            const [vtR, abR] = await Promise.allSettled([
-              keys.vtApiKey    ? checkVT(host, keys.vtApiKey)       : Promise.resolve(null),
-              keys.abuseApiKey ? checkAbuse(host, keys.abuseApiKey) : Promise.resolve(null),
-            ]);
-            const vt    = vtR.status === 'fulfilled' ? vtR.value : null;
-            const abuse = abR.status === 'fulfilled' ? abR.value : null;
+            const zs = keys.zeroscanApiKey ? await checkZeroScan(host, keys.zeroscanApiKey) : null;
             cached = {
-              level: classify(vt, abuse), vt, abuse,
+              level: classify(zs), zs,
               cloudflare: null, resolvedIP: '', country: '',
               countryCode: '', isp: '', enriched: false
             };
             await cacheSet(host, cached);
           }
-          const vtBad      = cached.vt    ? (cached.vt.malicious + cached.vt.suspicious) : 0;
-          const abuseScore = cached.abuse ? cached.abuse.score : 0;
-          // Flag: any vendor hit  OR  AbuseIPDB confidence >= 10%
-          if (vtBad >= 1 || abuseScore >= 10) {
-            flagged.push({ host, vtBad, vtTotal: cached.vt?.total || 0, abuseScore });
+          if (cached.level === 'suspicious' || cached.level === 'malicious') {
+            flagged.push({
+              host,
+              verdict: getEntryVerdict(cached),
+              category: cached.zs?.category || '',
+              level: cached.level
+            });
           }
         } catch (_) { /* skip broken hosts */ }
       }
@@ -755,8 +1034,8 @@ chrome.runtime.onMessage.addListener(function(msg, sender, respond) {
       if (flagged.length > 0) {
         const details = flagged.map(function(f) {
           const parts = [];
-          if (f.vtBad)      parts.push('VT: ' + f.vtBad + '/' + f.vtTotal);
-          if (f.abuseScore) parts.push('Abuse: ' + f.abuseScore + '%');
+          if (f.verdict)    parts.push('ZeroScan: ' + String(f.verdict).toUpperCase());
+          if (f.category)   parts.push(f.category);
           return f.host + (parts.length ? ' (' + parts.join(', ') + ')' : '');
         }).join('\n');
         sendChromeNotif(
@@ -765,16 +1044,12 @@ chrome.runtime.onMessage.addListener(function(msg, sender, respond) {
           'Flagged URLs detected:\n' + details
         );
       }
-      // Return all checked hosts with their status
       const allResults = hosts.map(function(host) {
         const f = flagged.find(function(x){ return x.host === host; });
-        if (f) {
-          const lvl = (f.vtBad >= 4 || f.abuseScore >= 55) ? 'malicious' : 'suspicious';
-          return { host: host, clean: false, vtBad: f.vtBad, vtTotal: f.vtTotal, abuseScore: f.abuseScore, level: lvl };
-        }
-        return { host: host, clean: true, level: 'clean' };
+        if (f) return { host, clean: false, verdict: f.verdict, category: f.category, level: f.level };
+        return { host, clean: true, level: 'clean' };
       });
-      respond({ flagged: flagged, all: allResults });
+      respond({ flagged, all: allResults });
     })();
     return true;
   }

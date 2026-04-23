@@ -41,8 +41,8 @@ function flagEmoji(cc) {
 
 // ── Dot ──────────────────────────────────────────────────────
 function updateDot() {
-  chrome.storage.sync.get(['vtApiKey','abuseApiKey'], function(s){
-    document.getElementById('gDot').className = (s.vtApiKey || s.abuseApiKey) ? 'sdot' : 'sdot dead';
+  chrome.storage.sync.get(['zeroscanApiKey'], function(s){
+    document.getElementById('gDot').className = s.zeroscanApiKey ? 'sdot' : 'sdot dead';
   });
 }
 
@@ -50,9 +50,16 @@ function updateDot() {
 var pollTimer = null;
 var currentHost = '';
 var currentResolvedIP = '';
+var currentLookupTarget = '';
+function setSiteAdvice(show) {
+  var el = document.getElementById('siteAdvice');
+  if (!el) return;
+  el.classList.toggle('show', !!show);
+}
 function hideSite() {
   document.getElementById('siteWrap').style.display = 'none';
   document.getElementById('siteEmpty').style.display = 'block';
+  setSiteAdvice(false);
 }
 function showLoading(host) {
   document.getElementById('siteEmpty').style.display = 'none';
@@ -60,6 +67,7 @@ function showLoading(host) {
   document.getElementById('siteHostLabel').textContent = host;
   document.getElementById('siteLoading').style.display = 'flex';
   document.getElementById('siteRows').style.display = 'none';
+  setSiteAdvice(false);
 }
 function renderCF(cloudflare, enriched) {
   var el = document.getElementById('siteCFBadge');
@@ -77,19 +85,13 @@ function renderCtry(cc, name, enriched) {
 function applyEnrich(res) {
   renderCF(res.cloudflare, res.enriched);
   renderCtry(res.countryCode||'', res.country||'', res.enriched);
-  if (res.abuse) {
-    var sc=res.abuse.score||0, a=document.getElementById('siteAbuse');
-    if(sc===0){a.textContent='0% — Clean';a.className='srow-val v-ok';}
-    else if(sc<20){a.textContent=sc+'% confidence';a.className='srow-val v-warn';}
-    else{a.textContent=sc+'% confidence';a.className='srow-val v-bad';}
-  }
   if (res.resolvedIP) {
     currentResolvedIP = res.resolvedIP;
     document.getElementById('siteIP').textContent=res.resolvedIP;
     document.getElementById('siteIPRow').style.display='flex';
   }
 }
-function renderSite(host, r) {
+function renderSiteLegacy(host, r) {
   currentHost = host;
   if (r.resolvedIP) currentResolvedIP = r.resolvedIP;
   document.getElementById('siteLoading').style.display = 'none';
@@ -97,12 +99,13 @@ function renderSite(host, r) {
   var lm={clean:['bdg bdg-clean','CLEAN'],suspicious:['bdg bdg-warn','SUSPICIOUS'],malicious:['bdg bdg-bad','MALICIOUS'],blocked:['bdg bdg-blocked','BLOCKED'],unknown:['bdg bdg-dim','UNKNOWN']};
   var lv=r.level||'unknown', l=lm[lv]||lm.unknown;
   document.getElementById('siteLevelBadge').className=l[0]; document.getElementById('siteLevelBadge').textContent=l[1];
-  var vt=document.getElementById('siteVT');
-  if(r.vt){var f=(r.vt.malicious||0)+(r.vt.suspicious||0),t=r.vt.total||0;if(f===0){vt.textContent='0/'+t+' — Clean';vt.className='srow-val v-ok';}else{vt.textContent=f+'/'+t+' flagged';vt.className=f>=3?'srow-val v-bad':'srow-val v-warn';}}
-  else{vt.textContent='No key';vt.className='srow-val v-dim';}
+  var zs=document.getElementById('siteVT');
+  if(r.zs){var d=r.zs.detections||0,t=r.zs.total_vendors||0;if(d===0){zs.textContent='0/'+t+' — Clean';zs.className='srow-val v-ok';}else{zs.textContent=d+'/'+t+' flagged';zs.className=d>=3?'srow-val v-bad':'srow-val v-warn';}}
+  else{zs.textContent='No key';zs.className='srow-val v-dim';}
   var ab=document.getElementById('siteAbuse');
-  if(r.abuse){var sc=r.abuse.score||0;if(sc===0){ab.textContent='0% — Clean';ab.className='srow-val v-ok';}else if(sc<20){ab.textContent=sc+'% confidence';ab.className='srow-val v-warn';}else{ab.textContent=sc+'% confidence';ab.className='srow-val v-bad';}}
-  else{ab.textContent='N/A (domain)';ab.className='srow-val v-dim';}
+  if(r.zs&&r.zs.category){ab.textContent=r.zs.category;ab.className='srow-val v-bad';}
+  else if(r.zs){ab.textContent='N/A';ab.className='srow-val v-dim';}
+  else{ab.textContent='No key';ab.className='srow-val v-dim';}
   applyEnrich(r);
   if (!r.enriched) startPoll(host);
 }
@@ -121,16 +124,17 @@ function loadCurrentSite() {
   chrome.tabs.query({active:true,currentWindow:true}, function(tabs){
     var tab=tabs&&tabs[0];
     if(!tab||!tab.url){hideSite();return;}
-    var host;
+    var host, lookupTarget;
     try{
       var u=new URL(tab.url);
       if(u.protocol==='chrome-extension:'&&u.pathname.includes('blocked.html')){
-        var bu=u.searchParams.get('url'); if(bu) host=new URL(bu).hostname; else{hideSite();return;}
-      } else host=u.hostname;
+        var bu=u.searchParams.get('url'); if(bu){ host=new URL(bu).hostname; lookupTarget=bu; } else{hideSite();return;}
+      } else { host=u.hostname; lookupTarget=tab.url; }
     }catch(e){hideSite();return;}
     if(!host||host.startsWith('chrome')||host==='localhost'||host==='127.0.0.1'){hideSite();return;}
+    currentLookupTarget = lookupTarget || host;
     showLoading(host);
-    chrome.runtime.sendMessage({type:'ANALYSE_HOST',host:host}, function(res){
+    chrome.runtime.sendMessage({type:'ANALYSE_SITE',host:host,url:currentLookupTarget}, function(res){
       if(!res){hideSite();return;} renderSite(host,res);
     });
   });
@@ -239,7 +243,7 @@ function openStats(filter){
   var inlineTitleEl = document.getElementById('inlineTitle');
   // Render column headers
   var colsEl = inlineEl.querySelector('.ov-cols');
-  colsEl.innerHTML = '<span>Domain / IP</span><span style="text-align:center">Country</span><span style="text-align:center">VT</span><span style="text-align:center">Abuse</span><span style="text-align:center">CF</span><span style="text-align:center">Actions</span>';
+  colsEl.innerHTML = '<span>Domain / IP</span><span style="text-align:center">Country</span><span style="text-align:center">Verdict</span><span style="text-align:center">Category</span><span style="text-align:center">CF</span><span style="text-align:center">Actions</span>';
 
   if(!list.length){rows.innerHTML='<div style="padding:16px;text-align:center;color:#7a94b0;font-size:11px">No entries</div>';}
   else {
@@ -248,10 +252,10 @@ function openStats(filter){
       var dot='<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:'+lc+';margin-right:5px;flex-shrink:0"></span>';
       var dm=x.target.length>22?x.target.slice(0,20)+'…':x.target;
       var flag=flagEmoji(x.countryCode); var ctry=flag?(flag+' '+x.countryCode):(x.country||'-');
-      var vtTxt=x.vtTotal>0?(x.vtFlagged+'/'+x.vtTotal):'-';
-      var vtColor=x.vtFlagged>=3?'#ef4444':x.vtFlagged>0?'#f59e0b':'#10b981';
-      var abuseTxt=x.abuseScore!=null?x.abuseScore+'%':'-';
-      var abuseColor=x.abuseScore>=40?'#ef4444':x.abuseScore>=10?'#f59e0b':x.abuseScore!=null&&x.abuseScore===0?'#10b981':'#7a94b0';
+      var detTxt=(x.verdict||x.level||'unknown').toUpperCase();
+      var detColor=detTxt==='MALICIOUS'?'#ef4444':detTxt==='SUSPICIOUS'?'#f59e0b':detTxt==='CLEAN'?'#10b981':'#94a3b8';
+      var catTxt=x.category||'-';
+      var catColor=x.category?'#ef4444':'#7a94b0';
       var cfTxt=x.cloudflare===true?'C':x.cloudflare===false?'D':'-';
       var diff=x.ts?Math.round((Date.now()-x.ts)/60000):0; var ago=diff<60?diff+'m ago':Math.round(diff/60)+'h ago';
       var canToggle = (x.level==='malicious'||x.level==='blocked');
@@ -273,8 +277,8 @@ function openStats(filter){
         +(x.resolvedIP?'<div style="font-size:9px;color:#7a94b0;margin-top:2px">'+x.resolvedIP+'</div>':'')
         +'<div style="font-size:9px;color:#7a94b0;margin-top:1px">'+ago+'</div></div>'
         +'<div style="text-align:center;font-size:11px">'+ctry+'</div>'
-        +'<div style="text-align:center;font-size:10.5px;font-weight:600;color:'+vtColor+'">'+vtTxt+'</div>'
-        +'<div style="text-align:center;font-size:10.5px;font-weight:600;color:'+abuseColor+'">'+abuseTxt+'</div>'
+        +'<div style="text-align:center;font-size:10.5px;font-weight:600;color:'+detColor+'">'+detTxt+'</div>'
+        +'<div style="text-align:center;font-size:10.5px;font-weight:600;color:'+catColor+'">'+catTxt+'</div>'
         +'<div style="text-align:center;font-size:13px">'+cfTxt+'</div>'
         +actionBtns+'</div>';
     }).join('');
@@ -483,15 +487,8 @@ function initRules(){
 // ── Boot ──────────────────────────────────────────────────────
 updateDot(); loadCache(); loadCurrentSite(); initRules();
 
-initKey({storageKey:'vtApiKey',inpId:'vtInp',saveId:'vtSave',inputRowId:'vtInputRow',savedAreaId:'vtSavedArea',previewId:'vtPreview',editId:'vtEdit',delId:'vtDel',tagId:'vtTag',label:'VirusTotal',onChange:function(){
-  chrome.runtime.sendMessage({type:'CLEAR_STALE_CACHE',keyType:'vt'},function(r){
-    if(r&&r.cleared>0)toast('Cleared '+r.cleared+' stale cache entries');
-    loadCache();
-  });
-  loadCurrentSite();
-}});
-initKey({storageKey:'abuseApiKey',inpId:'abuseInp',saveId:'abuseSave',inputRowId:'abuseInputRow',savedAreaId:'abuseSavedArea',previewId:'abusePreview',editId:'abuseEdit',delId:'abuseDel',tagId:'abuseTag',label:'AbuseIPDB',onChange:function(){
-  chrome.runtime.sendMessage({type:'CLEAR_STALE_CACHE',keyType:'abuse'},function(r){
+initKey({storageKey:'zeroscanApiKey',inpId:'zsInp',saveId:'zsSave',inputRowId:'zsInputRow',savedAreaId:'zsSavedArea',previewId:'zsPreview',editId:'zsEdit',delId:'zsDel',tagId:'zsTag',label:'ZeroScan',onChange:function(){
+  chrome.runtime.sendMessage({type:'CLEAR_STALE_CACHE',keyType:'zeroscan'},function(r){
     if(r&&r.cleared>0)toast('Cleared '+r.cleared+' stale cache entries');
     loadCache();
   });
@@ -770,14 +767,13 @@ function isIPAddr(h) { return /^(\d{1,3}\.){3}\d{1,3}$/.test(h); }
 function openTab(url) { chrome.tabs.create({ url: url }); }
 
 document.getElementById('siteVTRow').addEventListener('click', function() {
-  if (!currentHost) return;
-  var path = isIPAddr(currentHost) ? 'ip-address/' : 'domain/';
-  openTab('https://www.virustotal.com/gui/' + path + currentHost);
+  if (!currentLookupTarget && !currentHost) return;
+  openTab('https://zeroscan.az/lookup?q=' + encodeURIComponent(currentLookupTarget || currentHost));
 });
 
 document.getElementById('siteAbuseRow').addEventListener('click', function() {
-  if (!currentHost) return;
-  openTab('https://www.abuseipdb.com/check/' + currentHost);
+  if (!currentLookupTarget && !currentHost) return;
+  openTab('https://zeroscan.az/lookup?q=' + encodeURIComponent(currentLookupTarget || currentHost));
 });
 
 function openWhois() {
@@ -789,3 +785,49 @@ function openWhois() {
 document.getElementById('siteCountryRow').addEventListener('click', openWhois);
 document.getElementById('siteCFRow').addEventListener('click', openWhois);
 document.getElementById('siteIPRow').addEventListener('click', openWhois);
+document.getElementById('siteAdviceBtn').addEventListener('click', function() {
+  var btn = document.querySelector('.tab[data-tab="keys"]');
+  if (btn) btn.click();
+});
+
+function getZeroScanVerdict(r) {
+  var v = (r && r.zs && r.zs.verdict ? String(r.zs.verdict) : String((r && r.level) || 'unknown')).toLowerCase();
+  if (v === 'clean' || v === 'suspicious' || v === 'malicious') return v;
+  return r && r.level === 'blocked' ? 'blocked' : 'unknown';
+}
+
+function renderSite(host, r) {
+  currentHost = host;
+  if (!currentLookupTarget) currentLookupTarget = host;
+  if (r.resolvedIP) currentResolvedIP = r.resolvedIP;
+  document.getElementById('siteLoading').style.display = 'none';
+  document.getElementById('siteRows').style.display = 'block';
+  var lm={clean:['bdg bdg-clean','CLEAN'],suspicious:['bdg bdg-warn','SUSPICIOUS'],malicious:['bdg bdg-bad','MALICIOUS'],blocked:['bdg bdg-blocked','BLOCKED'],unknown:['bdg bdg-dim','UNKNOWN']};
+  var hasZeroScan=!!r.zs;
+  var lv=hasZeroScan?(r.level||'unknown'):'unknown', l=lm[lv]||lm.unknown;
+  document.getElementById('siteLevelBadge').className=l[0];
+  document.getElementById('siteLevelBadge').textContent=l[1];
+  var zs=document.getElementById('siteVT');
+  if(hasZeroScan){
+    var verdict=getZeroScanVerdict(r);
+    zs.textContent=verdict.toUpperCase();
+    zs.className='srow-val ' + (verdict==='malicious'?'v-bad':verdict==='suspicious'?'v-warn':verdict==='clean'?'v-ok':'v-dim');
+  } else {
+    zs.textContent='No key';
+    zs.className='srow-val v-dim';
+  }
+  var ab=document.getElementById('siteAbuse');
+  if(hasZeroScan&&r.zs.category){
+    ab.textContent=r.zs.category;
+    ab.className='srow-val ' + (getZeroScanVerdict(r)==='clean'?'v-dim':'v-bad');
+  } else if(hasZeroScan){
+    ab.textContent='N/A';
+    ab.className='srow-val v-dim';
+  } else {
+    ab.textContent='No key';
+    ab.className='srow-val v-dim';
+  }
+  setSiteAdvice(!hasZeroScan);
+  applyEnrich(r);
+  if (!r.enriched) startPoll(host);
+}

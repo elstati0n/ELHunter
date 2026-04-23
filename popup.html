@@ -48,6 +48,11 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
 /* SITE */
 .site-empty{font-size:11px;color:var(--dim);text-align:center;padding:10px 0}
 .site-host-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(59,158,255,.07);border:1px solid rgba(59,158,255,.14);border-radius:8px}
+.site-advice{display:none;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 12px;margin-top:8px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.18);border-radius:8px}
+.site-advice.show{display:flex}
+.site-advice-copy{font-size:10.5px;color:var(--dim);line-height:1.55}
+.site-advice-copy strong{color:var(--amber)}
+.site-advice-copy span{display:block;color:var(--txt);margin-top:2px}
 .shb-name{font-family:var(--mono);font-size:10.5px;color:var(--blue);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .spin-row{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:11px;padding:4px 0}
 .spin{width:11px;height:11px;border-radius:50%;border:2px solid rgba(59,158,255,.18);border-top-color:var(--blue);animation:rot .7s linear infinite;flex-shrink:0;display:inline-block}
@@ -93,6 +98,8 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
 .ks-off{background:rgba(77,98,133,.08);color:var(--dim);border:1px solid rgba(77,98,133,.18)}
 .key-hint{font-size:10.5px;color:var(--dim);line-height:1.55}
 .key-hint strong{color:var(--tg)}
+.key-hint a{color:var(--blue);text-decoration:none}
+.key-hint a:hover{text-decoration:underline}
 .inp-row{display:flex;gap:6px;align-items:center}
 .inp{flex:1;min-width:0;background:var(--bg0);border:1px solid var(--line);border-radius:7px;color:var(--txt);font-family:var(--mono);font-size:11px;letter-spacing:.04em;padding:8px 11px;outline:none;transition:border-color .18s}
 .inp::placeholder{color:var(--dim2);font-family:var(--sans);font-size:11px;letter-spacing:0}
@@ -219,11 +226,18 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
       <span style="font-size:13px">&#127760;</span>
       <span class="shb-name" id="siteHostLabel">-</span>
     </div>
+    <div id="siteAdvice" class="site-advice">
+      <div class="site-advice-copy">
+        <strong>ZeroScan API key not set.</strong>
+        <span>Threat verdict may be incomplete. Add your key in API Keys for full malicious and suspicious detection.</span>
+      </div>
+      <button class="btn btn-g" id="siteAdviceBtn" type="button">Open API Keys</button>
+    </div>
     <div class="spin-row" id="siteLoading"><div class="spin"></div><span>Analyzing...</span></div>
     <div id="siteRows" style="display:none">
       <div class="srow"><span class="srow-lbl">&#128737; Threat Level</span><span id="siteLevelBadge"></span></div>
-      <div class="srow srow-link" id="siteVTRow"><span class="srow-lbl">&#128270; VirusTotal</span><span class="srow-val" id="siteVT">-</span></div>
-      <div class="srow srow-link" id="siteAbuseRow"><span class="srow-lbl">&#128680; AbuseIPDB</span><span class="srow-val v-dim" id="siteAbuse">-</span></div>
+      <div class="srow srow-link" id="siteVTRow"><span class="srow-lbl">&#128270; ZeroScan</span><span class="srow-val" id="siteVT">-</span></div>
+      <div class="srow srow-link" id="siteAbuseRow"><span class="srow-lbl">&#127991; Category</span><span class="srow-val v-dim" id="siteAbuse">-</span></div>
       <div class="srow srow-link" id="siteCountryRow"><span class="srow-lbl">&#127758; Country</span><span class="srow-val" id="siteCountry">-</span></div>
       <div class="srow srow-link" id="siteCFRow"><span class="srow-lbl">&#9729; Cloudflare</span><span id="siteCFBadge"></span></div>
       <div class="srow srow-link" id="siteIPRow" style="display:none"><span class="srow-lbl">&#128421; Resolved IP</span><span class="srow-val v-dim" id="siteIP">-</span></div>
@@ -233,31 +247,19 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
 
 <!-- API KEYS -->
 <div class="panel" id="tab-keys">
-  <div class="osint-box"><strong>No keys needed for OSINT.</strong> Country, IP, ISP &amp; Cloudflare detection run free. Keys enable <strong>VirusTotal</strong> and <strong>AbuseIPDB</strong> scanning.</div>
+  <div class="osint-box"><strong>No keys needed for OSINT.</strong> Country, IP, ISP &amp; Cloudflare detection run free. A <strong>ZeroScan</strong> key enables full threat intelligence scanning.</div>
 
-  <!-- VT -->
+  <!-- ZeroScan -->
   <div class="key-block">
-    <div class="key-lbl">&#128270; VirusTotal <span class="key-status ks-off" id="vtTag">NOT SET</span></div>
-    <div class="inp-row" id="vtInputRow">
-      <input class="inp" id="vtInp" type="password" placeholder="Paste VirusTotal API key..." autocomplete="off" spellcheck="false"/>
-      <button class="btn btn-p" id="vtSave">Save</button>
+    <div class="key-lbl">&#128270; ZeroScan <span class="key-status ks-off" id="zsTag">NOT SET</span></div>
+    <div class="inp-row" id="zsInputRow">
+      <input class="inp" id="zsInp" type="password" placeholder="Paste ZeroScan API key..." autocomplete="off" spellcheck="false"/>
+      <button class="btn btn-p" id="zsSave">Save</button>
     </div>
-    <div id="vtSavedArea" style="display:none;flex-direction:column;gap:7px">
-      <div class="key-saved"><div class="key-dot"></div><div class="key-mask" id="vtPreview"></div></div>
-      <div class="btns-row"><button class="btn btn-g" id="vtEdit">Edit</button><button class="btn btn-d" id="vtDel">Remove</button></div>
-    </div>
-  </div>
-
-  <!-- AbuseIPDB -->
-  <div class="key-block">
-    <div class="key-lbl">&#128680; AbuseIPDB <span class="key-status ks-off" id="abuseTag">NOT SET</span></div>
-    <div class="inp-row" id="abuseInputRow">
-      <input class="inp" id="abuseInp" type="password" placeholder="Paste AbuseIPDB API key..." autocomplete="off" spellcheck="false"/>
-      <button class="btn btn-p" id="abuseSave">Save</button>
-    </div>
-    <div id="abuseSavedArea" style="display:none;flex-direction:column;gap:7px">
-      <div class="key-saved"><div class="key-dot"></div><div class="key-mask" id="abusePreview"></div></div>
-      <div class="btns-row"><button class="btn btn-g" id="abuseEdit">Edit</button><button class="btn btn-d" id="abuseDel">Remove</button></div>
+    <div class="key-hint">Go to <a href="https://zeroscan.az" target="_blank" rel="noreferrer">zeroscan.az</a>, sign up, and create an API key.</div>
+    <div id="zsSavedArea" style="display:none;flex-direction:column;gap:7px">
+      <div class="key-saved"><div class="key-dot"></div><div class="key-mask" id="zsPreview"></div></div>
+      <div class="btns-row"><button class="btn btn-g" id="zsEdit">Edit</button><button class="btn btn-d" id="zsDel">Remove</button></div>
     </div>
   </div>
 
@@ -335,11 +337,11 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
       <div class="f-row" style="margin-top:4px">
         <span class="f-lbl" style="display:flex;align-items:center;gap:6px">
           &#128269; Regex URL Check
-          <span style="font-size:9px;color:var(--dim2);font-family:var(--mono)">(AbuseIPDB + VT)</span>
+          <span style="font-size:9px;color:var(--dim2);font-family:var(--mono)">(ZeroScan)</span>
         </span>
         <span class="tog t-notif-on" id="phishRegexToggle">ON</span>
       </div>
-      <div style="font-size:10px;color:var(--dim2);line-height:1.5;padding-left:2px;margin-top:-2px">Scans every link in an email via VirusTotal &amp; AbuseIPDB. Fires a notification if any vendor flags it or Abuse score &ge; 10%.</div>
+      <div style="font-size:10px;color:var(--dim2);line-height:1.5;padding-left:2px;margin-top:-2px">Scans every link in an email via ZeroScan. Fires a notification if any detection is found.</div>
 
       <!-- LLM toggle -->
       <div class="f-row" style="margin-top:6px">
@@ -422,7 +424,7 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--txt);font-size:13
   </div>
 </div>
 
-<footer class="ftr"><span>ElHunter</span><span class="v">v1.1.0</span></footer>
+<footer class="ftr"><span>ElHunter</span><span class="v">v1.2.0</span></footer>
 <div class="toast" id="toast"></div>
 <script src="popup.js"></script>
 </body>

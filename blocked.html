@@ -88,7 +88,7 @@ html,body{min-height:100vh;overflow-x:hidden;background:var(--bg);color:var(--tx
       ElHunter · Access Blocked
     </div>
     <h1>This site is <span>dangerous</span></h1>
-    <p>Threat intelligence sources have flagged this URL as malicious. Access has been blocked to protect your device and data.</p>
+    <p>Threat intelligence sources flagged this request as unsafe. Access has been blocked to protect your device and data.</p>
   </div>
 
   <div class="tcard">
@@ -102,17 +102,14 @@ html,body{min-height:100vh;overflow-x:hidden;background:var(--bg);color:var(--tx
       <span class="trow-val url-val" id="rUrl">—</span>
     </div>
     <div class="trow">
-      <div class="trow-left"><span class="trow-ico">🔬</span><span class="trow-label">VirusTotal — Flagged vendors</span></div>
+      <div class="trow-left"><span class="trow-ico">🔬</span><span class="trow-label">ZeroScan — Detections</span></div>
       <div class="trow-spacer"></div>
-      <span class="trow-val" id="rVt">—</span>
+      <span class="trow-val" id="rDetections">—</span>
     </div>
     <div class="trow">
-      <div class="trow-left"><span class="trow-ico">🚨</span><span class="trow-label">AbuseIPDB — Confidence score</span></div>
+      <div class="trow-left"><span class="trow-ico">🏷</span><span class="trow-label">Category</span></div>
       <div class="trow-spacer"></div>
-      <div class="score-wrap" id="scoreWrap">
-        <div class="score-bar"><div class="score-fill" id="scoreFill"></div></div>
-        <span class="trow-val" id="rAbuse">—</span>
-      </div>
+      <span class="trow-val" id="rCategory">—</span>
     </div>
     <div class="trow">
       <div class="trow-left"><span class="trow-ico">🌍</span><span class="trow-label">Country</span></div>
@@ -141,7 +138,7 @@ html,body{min-height:100vh;overflow-x:hidden;background:var(--bg);color:var(--tx
     <button class="btn btn-risk" id="btnProceed">Proceed anyway</button>
   </div>
 
-  <div class="brand">ElHunter v1.0 · Powered by ElStation Company</div>
+  <div class="brand">ElHunter v1.2.0 · Powered by ElStation Company</div>
 </div>
 <script src="blocked.js"></script>
 </body>
